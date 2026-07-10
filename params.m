@@ -39,7 +39,6 @@ P.Pcap_veh = 80.0e3;        % FSAE EV total power rule [W]  <-- CONFIRM 2027 rul
 P.wmot_max = 12000*2*pi/60; % rated motor speed [rad/s] (mech limit 20000 rpm)
 P.wwheel_max = P.wmot_max/P.gear;
 P.tau_motor = 0.010;        % inverter+motor torque lag [s]  (AMK fast; was 0.03)
-P.regen_on  = false;        % allow negative motor torque
 
 %% --- Per-corner rotational inertia (RIGID hub, NO half-shaft) ---
 % Jc = Jrotor*gear^2 + Jwheel_single   (wheel-referenced, per corner)
@@ -66,22 +65,15 @@ P.use_ff  = true;           % grip-based feedforward on/off
 P.slip_lpf_fc = 0;          % slip meas. LPF corner [Hz], 0 = off (handled in est.)
 P.use_ellipse   = true;     % combined-slip friction ellipse (derate Fx by lateral use)
 P.use_corner_vel= true;     % per-corner ground speed from yaw (r ~ ay/vx)
-P.Tbrk_pk = 2.0*P.Tmot_pk;  % brake torque cap, motor-referenced [Nm]. Motor regen
-                            % covers up to Tmot_pk*regen_on; friction brakes the rest.
-                            % Set high so the GRIP ceiling is the limiter (brake-side TC).
 
 %% --- Maneuver / sim -------------------------------------------------------
 % This is NOT just a launch run. maneuver.m sweeps the car through several
 % states so the model reports the per-wheel traction CEILING in each:
 %   [0, t1)      standing launch, straight        (drive-limited / launch TC)
-%   [t1, t2)     partial throttle + hard cornering (COMBINED slip, ellipse)
-%   [t2, t3)     trail-brake into the corner        (brake TC + lateral)
-%   [t3, tEnd]   straight-line braking              (brake-side TC)
+%   [t1, tEnd]   partial throttle + hard cornering (COMBINED slip, ellipse)
 P.accel_only = true;
 P.sched_on = false;
 P.t1 = 2.5;                 % end of launch [s]
-P.t2 = 4.0;                 % end of corner-exit accel [s]
-P.t3 = 5.0;                 % end of trail-brake [s]
 P.ay_corner = 12.0;         % prescribed lateral accel in the corner [m/s^2] (~1.2g)
 P.man_blend = 0.15;         % phase-transition smoothing time [s]
 P.T_request = P.Tmot_pk;    % reference full drive torque/motor [Nm]

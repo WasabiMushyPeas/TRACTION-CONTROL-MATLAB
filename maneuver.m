@@ -1,9 +1,9 @@
 function [Treq, ay] = maneuver(t, P)
-%MANEUVER  Prescribed driver/scenario demand vs time -> exercises the whole
-%  traction envelope (launch, combined-slip cornering, braking). This is what
-%  makes the sim "max grip in ANY state" rather than a single launch run.
+%MANEUVER  Prescribed driver/scenario demand vs time -> exercises the
+%  traction envelope (launch, combined-slip cornering). This is what makes
+%  the sim "max grip in ANY state" rather than a single launch run.
 %
-%  Treq  scalar signed torque request per motor [Nm]  (+ drive, - brake)
+%  Treq  scalar drive torque request per motor [Nm] (>=0)
 %  ay    scalar prescribed lateral accel [m/s^2]  (drives lateral load
 %        transfer + friction-ellipse consumption; NOT a solved yaw state)
 %
@@ -17,18 +17,12 @@ function [Treq, ay] = maneuver(t, P)
 
     Tdrv_full  = P.Tmot_pk;
     Tdrv_corner= 0.5*P.Tmot_pk;
-    Tbrk       = P.Tbrk_pk;
 
-    % torque request: full drive -> half drive -> brake -> brake
-    Treq =  Tdrv_full ...
-          - (Tdrv_full - Tdrv_corner) * sd(P.t1) ...     % ease off entering corner
-          - (Tdrv_corner + Tbrk)      * sd(P.t2) ...     % roll into braking
-          + 0*sd(P.t3);                                  % (stays on the brakes)
+    % torque request: full drive -> half drive through the corner
+    Treq = Tdrv_full - (Tdrv_full - Tdrv_corner) * sd(P.t1);
 
-    % lateral: 0 -> full corner -> partial (trail) -> 0
-    ay =  P.ay_corner * sd(P.t1) ...
-        - 0.4*P.ay_corner * sd(P.t2) ...                 % unwind to trail-brake level
-        - 0.6*P.ay_corner * sd(P.t3);                    % straighten for the stop
+    % lateral: 0 -> full corner
+    ay = P.ay_corner * sd(P.t1);
 
     if P.accel_only
         Treq = P.Tmot_pk; ay = 0; return

@@ -9,7 +9,7 @@ set_param(mdl,'SolverType','Variable-step','SolverName',P.solver, ...
     'ReturnWorkspaceOutputs','on');
 out = sim(mdl);
 ds  = out.logsout;
-gv  = @(name) ds.get(name).Values;      % shorthand: get a signal's timeseries
+gv  = @(name) ds.get(name).Values;
 
 %% ---- pull logs ----
 t    = gv('vx').Time;                sc  = gv('sched').Data(:);
@@ -18,11 +18,11 @@ ay   = gv('ay').Data(:);            Trq  = gv('Treq').Data(:);
 w    = as4(gv('w').Data);           slp  = as4(gv('slip').Data);
 Tc   = as4(gv('Tcmd').Data);         Fz  = as4(gv('Fz').Data);
 muu  = as4(gv('mu_util').Data);     Fxc  = as4(gv('Fx_cap').Data);
-Tmd  = as4(gv('Tmax_drv').Data);    Tmb  = as4(gv('Tmax_brk').Data);
+Tmd  = as4(gv('Tmax_drv').Data);
 
 dist = cumtrapz(t, vx);
 lbl  = {'FL','FR','RL','RR'};
-pb   = [P.t1 P.t2 P.t3];                        % phase boundaries
+pb   = P.t1;                                    % phase boundaries
 pl   = @() arrayfun(@(x) xline(x,'k:','HandleVisibility','off'), pb, 'UniformOutput', false);
 
 %% ---- headline metrics ----
@@ -46,9 +46,9 @@ title('slip ratio / wheel  (\pm target)'); xlabel t; ylabel \sigma
 legend(lbl,'Location','best'); ylim([-0.5 0.5]);
 
 nexttile; plot(t,Tc,'LineWidth',1); hold on; pl();
-plot(t,Tmd,'--','LineWidth',0.6); plot(t,Tmb,':','LineWidth',0.6); grid on
-title('motor torque cmd + grip ceilings'); xlabel t; ylabel 'N\cdotm'
-legend([lbl {'T_{max,drv}','T_{max,brk}'}],'Location','best');
+plot(t,Tmd,'--','LineWidth',0.6); grid on
+title('motor torque cmd + grip ceiling'); xlabel t; ylabel 'N\cdotm'
+legend([lbl {'T_{max,drv}'}],'Location','best');
 
 nexttile; yyaxis left; plot(t,vx,'LineWidth',1.3); ylabel 'v_x [m/s]'; hold on
 yyaxis right; plot(t,ax,'-',t,ay,'--','LineWidth',1); ylabel 'accel [m/s^2]'; pl()
@@ -68,7 +68,7 @@ yyaxis right; plot(t,ay,'LineWidth',1); ylabel 'a_y [m/s^2]'; pl()
 grid on; title('scenario: torque request & lateral'); xlabel t
 
 title(tl, sprintf('CP27E 4-wheel hub-motor TC  |  gear=%.1f  T_{pk}=%.0f Nm  %s', ...
-    P.gear, P.Tmot_pk, 'launch \rightarrow corner \rightarrow brake'));
+    P.gear, P.Tmot_pk, 'launch \rightarrow corner'));
 
 %% ---- normalize any per-wheel log to N x 4 ----
 function M = as4(D)
