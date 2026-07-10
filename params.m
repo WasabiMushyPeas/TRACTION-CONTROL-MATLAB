@@ -34,6 +34,8 @@ P.gear     = 13.2;          % motor -> wheel reduction (typical AMK DD5 FSE ~13-
 P.eta      = 0.89;          % drivetrain efficiency
 P.Tmot_pk  = 21.0;          % PEAK motor torque / motor [Nm]  (AMK Mmax)
 P.Tmot_rat = 9.8;           % rated torque [Nm]  (reference)
+P.Pmot_pk  = 15.0e3;        % PEAK power per motor [W] for accel  <-- CONFIRM
+P.Pcap_veh = 80.0e3;        % FSAE EV total power rule [W]  <-- CONFIRM 2027 rules
 P.wmot_max = 12000*2*pi/60; % rated motor speed [rad/s] (mech limit 20000 rpm)
 P.wwheel_max = P.wmot_max/P.gear;
 P.tau_motor = 0.010;        % inverter+motor torque lag [s]  (AMK fast; was 0.03)
@@ -59,7 +61,7 @@ P.Kaw = 8;                  % back-calc anti-windup gain [1/s]   <-- tune
 % switching transient.
 P.v_lo = 2.0;               % PI fade-in start [m/s]
 P.v_hi = 6.0;               % PI fade-in end   [m/s]
-P.v_floor = 0.7;            % slip-denominator / relaxation floor [m/s]
+P.v_floor = 0.1;            % slip-denominator / relaxation floor [m/s]
 P.use_ff  = true;           % grip-based feedforward on/off
 P.slip_lpf_fc = 0;          % slip meas. LPF corner [Hz], 0 = off (handled in est.)
 P.use_ellipse   = true;     % combined-slip friction ellipse (derate Fx by lateral use)
@@ -76,6 +78,7 @@ P.Tbrk_pk = 2.0*P.Tmot_pk;  % brake torque cap, motor-referenced [Nm]. Motor reg
 %   [t2, t3)     trail-brake into the corner        (brake TC + lateral)
 %   [t3, tEnd]   straight-line braking              (brake-side TC)
 P.accel_only = true;
+P.sched_on = false;
 P.t1 = 2.5;                 % end of launch [s]
 P.t2 = 4.0;                 % end of corner-exit accel [s]
 P.t3 = 5.0;                 % end of trail-brake [s]

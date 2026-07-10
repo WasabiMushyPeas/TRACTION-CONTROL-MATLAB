@@ -40,14 +40,21 @@ function [Tcmd, dI, e, sched, uff] = ...
     else
         uff = zeros(1,4);
     end
-
-    sched = min(max((vx - P.v_lo)/(P.v_hi - P.v_lo), 0), 1);
+    
+    if P.sched_on
+        sched = min(max((vx - P.v_lo)/(P.v_hi - P.v_lo), 0), 1);
+    else
+        sched = 1;                 % full PID from the start
+    end
     Kp = P.Kp0*sched;  Ki = P.Ki0*sched;
 
     up      = Kp .* e;
     u_unsat = uff + up + I;
 
-    Tdrv_mot = P.Tmot_pk;
+    wmot     = max(abs(vx)/P.Rw*P.gear, 1);          % motor speed [rad/s], floored
+    Pshare   = min(P.Pmot_pk, P.Pcap_veh/4);         % usable peak power / motor [W]
+    Tdrv_mot = min(P.Tmot_pk, Pshare./wmot);         % drive torque envelope [Nm]
+
     Tbrk_mot = -P.Tmot_pk * double(P.regen_on);      % motor regen; friction adds rest
     if P.regen_on
         Tb_floor = max(Tmax_brk, Tbrk_mot);          % motor-only: cap at regen torque
