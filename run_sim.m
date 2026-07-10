@@ -2,7 +2,7 @@ clear; clc;
 
 params;
 mdl = 'CP27E_TC';
-if ~bdIsLoaded(mdl); build_cp27e_tc(); end
+if ~bdIsLoaded(mdl); open_system(mdl); end
 
 set_param(mdl,'SolverType','Variable-step','SolverName',P.solver, ...
     'StopTime',num2str(P.tEnd),'MaxStep',num2str(P.maxStep), ...

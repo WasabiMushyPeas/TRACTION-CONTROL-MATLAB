@@ -1,18 +1,4 @@
 function dX = plant_long(X, Tcmd, Fx_ss, P)
-%PLANT_LONG  4-wheel longitudinal plant, hub motors (RIGID, no half-shaft).
-%  State X (13x1, COLUMN) = [vx; w(4); Fx_dyn(4); Tmot(4)]
-%  Inputs Tcmd 1x4 motor torque cmd [Nm] (>=0, drive),
-%         Fx_ss 1x4 steady tire force from tire_long [N]
-%  Output dX 13x1 column
-%
-%  Per-wheel signals arrive as ROW 1x4; the state is COLUMN -> coerce commands
-%  to columns here so dX assembles cleanly. Hub motors: rotor+gear+wheel rigid,
-%  so NO half-shaft spring/damper (old 2WD K,C gone) -> that driveline resonance
-%  is removed:  Jc*dw = Tmot*gear*eta - Fx*Rw.
-%  Tire force uses a relaxation-length lag tau = Lrelax/max(vx,v_floor): slow at
-%  low speed (physical), fast at speed. Using Fx_dyn (a state) for the wheel/veh
-%  dynamics and Fx_ss only to drive relaxation keeps the model algebraic-loop-free.
-%#codegen
     vx   = X(1);
     w    = X(2:5);                          % 4x1 col
     Fxd  = X(6:9);                          % 4x1 col

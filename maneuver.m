@@ -1,17 +1,5 @@
 function [Treq, ay] = maneuver(t, P)
-%MANEUVER  Prescribed driver/scenario demand vs time -> exercises the
-%  traction envelope (launch, combined-slip cornering). This is what makes
-%  the sim "max grip in ANY state" rather than a single launch run.
-%
-%  Treq  scalar drive torque request per motor [Nm] (>=0)
-%  ay    scalar prescribed lateral accel [m/s^2]  (drives lateral load
-%        transfer + friction-ellipse consumption; NOT a solved yaw state)
-%
-%  ay is an INPUT, not an integrated state: the model answers "given this much
-%  lateral grip use, how much longitudinal torque can each tire take" without
-%  a full yaw-plane vehicle model. Swap this for a real driver/track profile,
-%  or feed measured ay, when you couple it to the TV plant.
-%#codegen
+
     b = max(P.man_blend, 1e-3);
     sd = @(t0) smooth_step((t - t0)/b);     % 0->1 ramp centred after t0
 

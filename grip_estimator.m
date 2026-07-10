@@ -1,20 +1,5 @@
-function [Fx_est, mu_util, Fx_cap, Tmax_drv, margin] = ...
-        grip_estimator(Fx_dyn, Fz, slip, ay, P)
-%GRIP_ESTIMATOR  Per-wheel grip state + traction CEILING -- the core "how much
-%  can this tire take right now, in ANY state" block. All I/O ROW 1x4.
-%
-%  Inputs  Fx_dyn 1x4 current tire long. force [N]; Fz 1x4 [N]; slip 1x4;
-%          ay scalar [m/s^2]
-%  Outputs Fx_est   1x4 est. long. force [N] (= Fx_dyn; on-car reconstruct
-%                   Fx = (Tmot*gear*eta - Jc*domega)/Rw from torque + wheel accel)
-%          mu_util  1x4 COMBINED utilization |Fx|/Fx_cap  (1.0 = ellipse edge)
-%          Fx_cap   1x4 MAX longitudinal force available now [N] (ellipse-derated)
-%          Tmax_drv 1x4 max DRIVE motor torque to reach +Fx_cap [Nm] (+)
-%          margin   1x4 slip margin to the mu-slip peak (>0 below peak)
-%
-%  Tmax_drv is the per-wheel friction-circle constraint -- feed it to the
-%  controller now, and to the TV allocator (QP/WLS) later.
-%#codegen
+function [Fx_est, mu_util, Fx_cap, Tmax_drv, margin] = grip_estimator(Fx_dyn, Fz, slip, ay, P)
+
     Fx_dyn = Fx_dyn(:).';  Fz = max(Fz(:).',0);  slip = slip(:).';   % ROW 1x4
     mu = max((P.D1 - P.D2.*Fz).*P.grip.*P.mu_scale, 0.1);
     if P.use_ellipse
