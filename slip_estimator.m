@@ -8,7 +8,7 @@ function slip = slip_estimator(w, vx, ay, P)
     else
         vx_c = vx*ones(1,4);
     end
-    vref = max(abs(vx_c), P.v_floor);
+    vref = max(abs(vx_c), P.v_floor_slip);
     slip = (w*P.Rw - vx_c) ./ vref;             % 1x4
     slip = max(min(slip, 1), -1);
 end

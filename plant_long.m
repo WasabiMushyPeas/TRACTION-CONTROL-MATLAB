@@ -12,9 +12,10 @@ function dX = plant_long(X, Tcmd, Fx_ss, P)
 
     Twheel = Tmot .* P.gear .* P.eta;       % 4x1
     dw     = (Twheel - Fxd.*P.Rw) ./ P.Jc;  % 4x1
-
+     
     if P.use_relax
-        tau_r = P.Lrelax ./ max(abs(vx), P.v_floor);
+        vrel  = max(max(abs(vx), abs(w).*P.Rw), 1.0);   % 4x1: tire sweeps at wheel speed
+        tau_r = P.Lrelax ./ vrel;
         dFxd  = (Fx_ss - Fxd) ./ tau_r;
     else
         dFxd  = (Fx_ss - Fxd) ./ P.maxStep;

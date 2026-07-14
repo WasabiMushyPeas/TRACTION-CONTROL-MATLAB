@@ -3,7 +3,7 @@ function [Treq, ay] = maneuver(t, P)
     b = max(P.man_blend, 1e-3);
     sd = @(t0) smooth_step((t - t0)/b);     % 0->1 ramp centred after t0
 
-    Tdrv_full  = 0.2*P.Tmot_pk;
+    Tdrv_full  = P.Tmot_pk;
     Tdrv_corner= 0.5*P.Tmot_pk;
 
     % torque request: full drive -> half drive through the corner
@@ -11,9 +11,9 @@ function [Treq, ay] = maneuver(t, P)
 
     % lateral: 0 -> full corner
     ay = P.ay_corner * sd(P.t1);
-
+    
     if P.accel_only
-        Treq = 0.2*P.Tmot_pk; ay = 0; return
+        Treq = P.Tmot_pk; ay = 0; return
     end
 end
 
