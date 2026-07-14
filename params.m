@@ -55,8 +55,8 @@ P.Crr = 0.015; % rolling resistance coeff
 
 %% --- Controller ---
 P.slip_tgt = 0.13;          % target slip ratio
-P.Kp0 = 120;                % base P gain [Nm per unit slip]     <-- tune
-P.Ki0 = 400;                % base I gain [Nm/s per unit slip]   <-- tune
+P.Kp0 = 200;                % base P gain [Nm per unit slip]     <-- tune
+P.Ki0 = 150;                % base I gain [Nm/s per unit slip]   <-- tune
 P.Kaw = 8;                  % back-calc anti-windup gain [1/s]   <-- tune
 
 
@@ -76,7 +76,7 @@ P.t1 = 2.5;                 % end of launch [s]
 P.ay_corner = 12.0;         % prescribed lateral accel in the corner [m/s^2]
 P.man_blend = 0.15;         % phase-transition smoothing time [s]
 P.T_request = P.Tmot_pk;    % reference full drive torque/motor [Nm]
-P.v0   = 0.3;               % initial speed [m/s]
+P.v0   = 0.1;               % initial speed [m/s]
 P.tEnd = 6;                 % sim time [s]
 P.solver = 'ode23t';        % stiff (relaxation + fast wheel modes)
 P.maxStep = 1e-3;
