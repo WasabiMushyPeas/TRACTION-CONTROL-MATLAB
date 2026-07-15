@@ -24,10 +24,8 @@ getLoggedSignalValues = @(signalName) ...
 
 % --- Simulation variables ---
 time = getLoggedSignalValues("vx").Time;
-schedule = getLoggedSignalValues("sched").Data(:);
 vehicleSpeed = getLoggedSignalValues("vx").Data(:);
 longitudinalAccel = getLoggedSignalValues("ax").Data(:);
-lateralAcceleration = getLoggedSignalValues("ay").Data(:);
 requestedTorque = getLoggedSignalValues("Treq").Data(:);
 wheelSpeed = asFourColumnMatrix(getLoggedSignalValues("w").Data);
 slipRatio = asFourColumnMatrix(getLoggedSignalValues("slip").Data);

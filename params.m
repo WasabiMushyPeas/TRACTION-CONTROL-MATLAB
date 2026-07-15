@@ -47,8 +47,9 @@ P.motorTorqueTimeConstant = 0.010;       % inverter plus motor torque lag [s]
 % --- Rotational inertia ---
 P.rotorInertia = 2.74e-4;                % motor rotor inertia [kg*m^2]
 P.wheelInertia = 0.16490 / 2;            % one wheel/tire/hub equivalent [kg*m^2]
+P.gearboxInertia = 8.60e-4;              % motor-side, disc approx [kg*m^2]
 P.combinedWheelInertia = ...
-    P.rotorInertia * P.gearRatio^2 + P.wheelInertia;
+    (P.rotorInertia + P.gearboxInertia) * P.gearRatio^2 + P.wheelInertia;
 
 % --- Aero ---
 P.airDensity = 1.225;                    % air density [kg/m^3]
@@ -59,7 +60,7 @@ P.rearDownforceFraction = 0.53;          % aero load fraction on rear axle
 P.rollingResistanceCoefficient = 0.015;
 
 % --- Traction controller ---
-P.targetSlipRatio = 0.17;
+P.targetSlipRatio = 0.148;
 P.slipProportionalGain = 30;
 P.slipIntegralGain = 300;
 P.antiWindupGain = 15;                   % back-calculation gain [1/s]
@@ -71,11 +72,6 @@ P.useFrictionEllipse = true;             % derate longitudinal grip when corneri
 P.useCornerSpeedEstimate = true;         % estimate each tire's ground speed from yaw
 
 % --- Maneuver ---
-P.accelerationOnly = true;
-P.launchEndTime = 2.5;                   % end of launch phase [s]
-P.cornerLateralAcceleration = 12.0;      % prescribed cornering accel [m/s^2]
-P.maneuverBlendTime = 0.15;              % smooth transition time [s]
-P.fullDriveTorqueRequest = P.peakMotorTorque;
 P.initialSpeed = 0.3;                    % initial vehicle speed [m/s]
 P.simulationEndTime = 10;                % Simulink stop time [s]
 P.solverName = 'ode23t';                 % stiff solver for fast wheel/tire modes
