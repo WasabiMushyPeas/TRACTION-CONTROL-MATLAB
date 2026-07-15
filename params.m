@@ -8,8 +8,7 @@ P.trackWidth = 1.22;                     % left tire center to right tire center
 P.centerOfGravityHeight = 0.254;         % CG height above the ground [m]
 P.frontAxleToCg = 29.402 * 0.0254;       % front axle to CG [m]
 P.rearAxleToCg = 30.848 * 0.0254;        % CG to rear axle [m]
-P.staticRearWeightFraction = ...
-    P.frontAxleToCg / P.wheelbase;
+P.staticRearWeightFraction = P.frontAxleToCg / P.wheelbase;
 
 % --- Tire and wheel ---
 P.wheelRadius = 0.203;                   % loaded tire radius [m]

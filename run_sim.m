@@ -75,7 +75,7 @@ torqueEnvelope = min(P.peakMotorTorque, ...
 plotEndTime = min(time(end), timeTo75m*1.05);
 if isnan(plotEndTime), plotEndTime = time(end); end
 
-% --- Plots ---
+% --- Plots (AI SLOP) ---
 fig = figure('Name','CP27E accel 0-75m','Color','w','Position',[60 60 1280 760]);
 tl  = tiledlayout(2,3,'TileSpacing','compact','Padding','compact');
 
