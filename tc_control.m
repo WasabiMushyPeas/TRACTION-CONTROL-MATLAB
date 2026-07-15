@@ -20,12 +20,7 @@ function [Tcmd, dI, e, sched, uff] = tc_control(slip, I, vx, Fz, Treq, Tmax_drv,
         uff = zeros(1,4);
     end
     
-    if P.sched_on
-        sched = min(max((vx - P.v_lo)/(P.v_hi - P.v_lo), 0), 1);
-    else
-        sched = 1;                 % full PID from the start
-    end
-    Kp = P.Kp0*sched;  Ki = P.Ki0*sched;
+    Kp = P.Kp0;  Ki = P.Ki0;
 
     up      = Kp .* e;
     u_unsat = uff + up + I;
