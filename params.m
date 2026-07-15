@@ -22,23 +22,12 @@ P.tireRelaxationLength = 0.25;           % tire force lag length [m]
 P.useTireRelaxation = true;
 P.slipSpeedFloor = 1.0;                  % minimum speed in slip denominator [m/s]
 
-gripPreset = 'dry';
-switch gripPreset
-    case 'dry'
-        P.tireGripScaleByWheel = [1.00 1.00 1.00 1.00];
-    case 'wet'
-        P.tireGripScaleByWheel = [0.20 0.20 0.20 0.20];
-    case 'ice'
-        P.tireGripScaleByWheel = [0.12 0.12 0.12 0.12];
-    case 'messed-up'
-        P.tireGripScaleByWheel = [1.00 0.20 1.00 0.20];
-end
 
 % --- Powertrain ---
 P.gearRatio = 10;                        % motor speed / wheel speed
 P.drivetrainEfficiency = 0.89;           % torque delivered after drivetrain losses
 P.peakMotorTorque = 21.0;                % peak torque per motor [Nm]
-P.peakMotorPowerPerMotor = 15.0e3;       % peak power per motor [W]
+P.peakMotorPowerPerMotor = 20.0e3;       % peak power per motor [W]
 P.vehiclePowerLimit = 80.0e3;            % FSAE EV total power limit [W]
 P.maxMotorSpeed = 12000 * 2*pi/60;       % rated motor speed [rad/s]
 P.maxWheelSpeed = P.maxMotorSpeed / P.gearRatio;
@@ -91,5 +80,5 @@ assignin('base','P',P);
 assignin('base','X0',initialState);
 assignin('base','I0',controllerInitialIntegralState);
 
-fprintf('params.m: grip=%s  gear=%.2f  peak torque=%.1f Nm  inertia=%.4f kg*m^2\n', ...
-    gripPreset, P.gearRatio, P.peakMotorTorque, P.combinedWheelInertia);
+fprintf('params.m: grip=%.2f  gear=%.2f  peak torque=%.1f Nm  inertia=%.4f kg*m^2\n', ...
+    P.globalGripScale, P.gearRatio, P.peakMotorTorque, P.combinedWheelInertia);
