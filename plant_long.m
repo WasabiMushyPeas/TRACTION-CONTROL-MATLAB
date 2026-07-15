@@ -6,22 +6,22 @@ function dX = plant_long(X, Tcmd, Fx_ss, P)
     Tcmd  = Tcmd(:);                         % -> 4x1 col
     Fx_ss = Fx_ss(:);                        % -> 4x1 col
 
-    drag = 0.5*P.rho*P.Cd*P.A*vx.^2;
-    rr   = P.Crr*P.m*P.g*tanh(vx/0.5);      % smooth rolling-resistance sign near 0
-    dvx  = (sum(Fxd) - drag - rr) / P.m;
+    drag = 0.5*P.airDensity*P.dragCoefficient*P.frontalArea*vx.^2;
+    rr   = P.rollingResistanceCoefficient*P.vehicleMass*P.gravity*tanh(vx/0.5); % smooth sign near 0
+    dvx  = (sum(Fxd) - drag - rr) / P.vehicleMass;
 
-    Twheel = Tmot .* P.gear .* P.eta;       % 4x1
-    dw     = (Twheel - Fxd.*P.Rw) ./ P.Jc;  % 4x1
+    Twheel = Tmot .* P.gearRatio .* P.drivetrainEfficiency;      % 4x1
+    dw     = (Twheel - Fxd.*P.wheelRadius) ./ P.combinedWheelInertia; % 4x1
      
-    if P.use_relax
-        vrel  = max(max(abs(vx), abs(w).*P.Rw), 1.0);   % 4x1: tire sweeps at wheel speed
-        tau_r = P.Lrelax ./ vrel;
+    if P.useTireRelaxation
+        vrel  = max(max(abs(vx), abs(w).*P.wheelRadius), 1.0);   % 4x1: tire sweeps at wheel speed
+        tau_r = P.tireRelaxationLength ./ vrel;
         dFxd  = (Fx_ss - Fxd) ./ tau_r;
     else
-        dFxd  = (Fx_ss - Fxd) ./ P.maxStep;
+        dFxd  = (Fx_ss - Fxd) ./ P.maxTimeStep;
     end
 
-    dTmot = (Tcmd - Tmot) ./ P.tau_motor;   % 4x1
+    dTmot = (Tcmd - Tmot) ./ P.motorTorqueTimeConstant;   % 4x1
 
     dX = [dvx; dw; dFxd; dTmot];            % 13x1 col
 end

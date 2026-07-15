@@ -10,9 +10,9 @@ end
 
 set_param(modelName, ...
     "SolverType", "Variable-step", ...
-    "SolverName", P.solver, ...
-    "StopTime", string(P.tEnd), ...
-    "MaxStep", string(P.maxStep), ...
+    "SolverName", P.solverName, ...
+    "StopTime", string(P.simulationEndTime), ...
+    "MaxStep", string(P.maxTimeStep), ...
     "ReturnWorkspaceOutputs", "on");
 
 simulationOutput = sim(modelName);
@@ -22,7 +22,7 @@ loggedSignals = simulationOutput.logsout;
 getLoggedSignalValues = @(signalName) ...
     loggedSignals.get(signalName).Values;
 
-% --- Sim Vars ---
+% --- Simulation variables ---
 time = getLoggedSignalValues("vx").Time;
 schedule = getLoggedSignalValues("sched").Data(:);
 vehicleSpeed = getLoggedSignalValues("vx").Data(:);
@@ -39,9 +39,9 @@ maxDriveTorque = asFourColumnMatrix(getLoggedSignalValues("Tmax_drv").Data);
 
 distance = cumtrapz(time, vehicleSpeed);
 wheelLabels = {'FL','FR','RL','RR'};
-eventTimes = P.t1;
+eventTimes = P.launchEndTime;
 
-% --- Accel nums ---
+% --- Acceleration results ---
 targetDistance = 75;
 firstIndexPastTarget = find(distance >= targetDistance, 1);
 
@@ -68,7 +68,7 @@ else
     fprintf('run_sim: 0-75 m in %.3f s (v=%.1f m/s)\n', timeTo75m, speedAt75m);
 end
 
-% --- front/rear avg ---
+% --- Front/rear averages ---
 frontSlipRatio = mean(slipRatio(:,1:2),2);
 rearSlipRatio = mean(slipRatio(:,3:4),2);
 frontCommandedTorque = mean(commandedTorque(:,1:2),2);
@@ -76,21 +76,22 @@ rearCommandedTorque = mean(commandedTorque(:,3:4),2);
 frontNormalLoad = mean(normalLoad(:,1:2),2);
 rearNormalLoad = mean(normalLoad(:,3:4),2);
 
-% --- Motor max torque-speed ---
-motorSpeed = max(abs(vehicleSpeed)/P.Rw*P.gear, 1);
-torqueEnvelope = min(P.Tmot_pk, min(P.Pmot_pk, P.Pcap_veh/4)./motorSpeed);
+% --- Motor torque-speed envelope ---
+motorSpeed = max(abs(vehicleSpeed)/P.wheelRadius*P.gearRatio, 1);
+torqueEnvelope = min(P.peakMotorTorque, ...
+    min(P.peakMotorPowerPerMotor, P.vehiclePowerLimit/4)./motorSpeed);
 
 plotEndTime = min(time(end), timeTo75m*1.05);
 if isnan(plotEndTime), plotEndTime = time(end); end
 
-% --- plots ---
+% --- Plots ---
 fig = figure('Name','CP27E accel 0-75m','Color','w','Position',[60 60 1280 760]);
 tl  = tiledlayout(2,3,'TileSpacing','compact','Padding','compact');
 
 nexttile
 plot(time, frontSlipRatio, 'b', time, rearSlipRatio, 'r', 'LineWidth', 1.2)
 hold on
-yline(P.slip_tgt, 'k--', 'target')
+yline(P.targetSlipRatio, 'k--', 'target')
 grid on
 xlim([0 plotEndTime])
 title('slip ratio (axle avg)'); xlabel('t [s]'); ylabel('\sigma')
@@ -133,15 +134,17 @@ if ~isnan(timeTo75m)
 end
 title('position'); xlabel('t [s]'); ylabel('x [m]');
 
-title(tl, sprintf('CP27E accel  |  0-75 m = %.3f s  |  gear=%.1f  T_{pk}=%.0f Nm  P=%.0f kW/motor', ...
-    timeTo75m, P.gear, P.Tmot_pk, min(P.Pmot_pk,P.Pcap_veh/4)/1e3));
+title(tl, sprintf('CP27E accel  |  0-75 m = %.3f s  |  gear ratio=%.1f  peak torque=%.0f Nm  power=%.0f kW/motor', ...
+    timeTo75m, P.gearRatio, P.peakMotorTorque, ...
+    min(P.peakMotorPowerPerMotor, P.vehiclePowerLimit/4)/1e3));
 
 outdir = 'plots';
-if ~exist(outdir,'dir'); 
-    mkdir(outdir); 
+if ~exist(outdir,'dir')
+    mkdir(outdir)
 end
 
-fname = fullfile(outdir, sprintf('accel_%s.png', datestr(now,'yyyy-mm-dd_HHMMSS')));
+timestamp = char(datetime("now", "Format", "yyyy-MM-dd_HHmmss"));
+fname = fullfile(outdir, sprintf('accel_%s.png', timestamp));
 exportgraphics(fig, fname, 'Resolution', 200);
 fprintf('saved %s\n', fname);
 

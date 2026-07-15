@@ -7,25 +7,26 @@ function [Fz, ax] = load_transfer(Fx_dyn, vx, ay, P)
 %  ax     scalar longitudinal accel (from Fx_dyn state -> no algebraic loop)
 %
 %  Lateral transfer per axle uses axle load share as the axle-mass proxy and the
-%  single track t; front/rear split follows static+aero balance. Proper roll-
+%  single track width; front/rear split follows static+aero balance. Proper roll-
 %  stiffness / ARB distribution is the next refinement.
 %#codegen
     Fx_dyn = Fx_dyn(:).';                        % ROW 1x4
-    drag = 0.5*P.rho*P.Cd*P.A*vx.^2;
-    rr   = P.Crr*P.m*P.g;
-    ax   = (sum(Fx_dyn) - drag - rr) / P.m;
+    drag = 0.5*P.airDensity*P.dragCoefficient*P.frontalArea*vx.^2;
+    rr   = P.rollingResistanceCoefficient*P.vehicleMass*P.gravity;
+    totalLongitudinalForce = Fx_dyn(1) + Fx_dyn(2) + Fx_dyn(3) + Fx_dyn(4);
+    ax   = (totalLongitudinalForce - drag - rr) / P.vehicleMass;
 
-    Wt = P.m*P.g;
-    DF = 0.5*P.rho*P.Cl*P.A*vx.^2;               % total aero downforce
-    Ff = Wt*(P.b/P.L) + DF*(1 - P.Cp);           % front axle static+aero
-    Fr = Wt*(P.a/P.L) + DF*(P.Cp);               % rear axle
+    Wt = P.vehicleMass*P.gravity;
+    DF = 0.5*P.airDensity*P.downforceCoefficient*P.frontalArea*vx.^2; % total aero downforce
+    Ff = Wt*(P.rearAxleToCg/P.wheelbase) + DF*(1 - P.rearDownforceFraction);
+    Fr = Wt*(P.frontAxleToCg/P.wheelbase) + DF*P.rearDownforceFraction;
 
-    dFx = P.m*ax*P.hcg/P.L;                       % long. transfer (rearward under +ax)
+    dFx = P.vehicleMass*ax*P.centerOfGravityHeight/P.wheelbase; % long. transfer (rearward under +ax)
     Ff  = Ff - dFx;
     Fr  = Fr + dFx;
 
-    dFy_f = (Ff/P.g)*ay*P.hcg/P.t;               % lateral transfer per axle
-    dFy_r = (Fr/P.g)*ay*P.hcg/P.t;
+    dFy_f = (Ff/P.gravity)*ay*P.centerOfGravityHeight/P.trackWidth; % lateral transfer per axle
+    dFy_r = (Fr/P.gravity)*ay*P.centerOfGravityHeight/P.trackWidth;
 
     Fz = [Ff/2 - dFy_f, Ff/2 + dFy_f, Fr/2 - dFy_r, Fr/2 + dFy_r];  % 1x4
     Fz = max(Fz, 0);

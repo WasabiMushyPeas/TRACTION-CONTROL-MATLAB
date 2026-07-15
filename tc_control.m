@@ -2,35 +2,37 @@ function [Tcmd, dI, e, sched, uff] = tc_control(slip, I, vx, Fz, Treq, Tmax_drv,
 
     slip = slip(:).';  I = I(:).';  Fz = max(Fz(:).',0);
     Tmax_drv = Tmax_drv(:).';
+    sched = 1;
 
-    s_tgt = P.slip_tgt;                               % scalar
+    s_tgt = P.targetSlipRatio;                        % scalar
     e     = s_tgt - slip;                             % 1x4
 
-    if P.use_ff
-        mu = max((P.D1 - P.D2.*Fz).*P.grip.*P.mu_scale, 0.1);
-        if P.use_ellipse
-            u_lat = min(abs(ay)/P.g ./ mu, 1);
+    if P.useGripFeedforward
+        mu = max((P.tirePeakMuBase - P.tirePeakMuLoadSensitivity.*Fz) .* ...
+            P.globalGripScale .* P.tireGripScaleByWheel, 0.1);
+        if P.useFrictionEllipse
+            u_lat = min(abs(ay)/P.gravity ./ mu, 1);
             ell   = sqrt(max(1 - u_lat.^2, 0));
         else
             ell   = ones(1,4);
         end
-        Fxf = (mu.*ell) .* Fz .* sin(P.C*atan(P.B*s_tgt));
-        uff = Fxf .* P.Rw ./ (P.gear*P.eta);
+        Fxf = (mu.*ell) .* Fz .* sin(P.tireMagicFormulaC*atan(P.tireMagicFormulaB*s_tgt));
+        uff = Fxf .* P.wheelRadius ./ (P.gearRatio*P.drivetrainEfficiency);
     else
         uff = zeros(1,4);
     end
     
-    Kp = P.Kp0;  Ki = P.Ki0;
+    Kp = P.slipProportionalGain;  Ki = P.slipIntegralGain;
 
     up      = Kp .* e;
     u_unsat = uff + up + I;
 
-    wmot     = max(abs(vx)/P.Rw*P.gear, 1);          % motor speed [rad/s], floored
-    Pshare   = min(P.Pmot_pk, P.Pcap_veh/4);         % usable peak power / motor [W]
-    Tdrv_mot = min(P.Tmot_pk, Pshare./wmot);         % drive torque envelope [Nm]
+    wmot     = max(abs(vx)/P.wheelRadius*P.gearRatio, 1);       % motor speed [rad/s], floored
+    Pshare   = min(P.peakMotorPowerPerMotor, P.vehiclePowerLimit/4); % usable peak power / motor [W]
+    Tdrv_mot = min(P.peakMotorTorque, Pshare./wmot);             % drive torque envelope [Nm]
 
     Tmax = min( max(Treq,0), min(Tdrv_mot, Tmax_drv) );   % 1x4
     Tcmd = min(max(u_unsat, 0), Tmax);
 
-    dI = Ki .* e + P.Kaw .* (Tcmd - u_unsat);        % back-calc anti-windup
+    dI = Ki .* e + P.antiWindupGain .* (Tcmd - u_unsat); % back-calc anti-windup
 end
