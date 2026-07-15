@@ -1,5 +1,5 @@
 function [normalLoad, longitudinalAcceleration] = ...
-    load_transfer(dynamicLongitudinalForce, vehicleSpeed, lateralAcceleration, params)
+    load_transfer(dynamicLongitudinalForce, vehicleSpeed, params)
 
     dynamicLongitudinalForce = dynamicLongitudinalForce(:).';
 

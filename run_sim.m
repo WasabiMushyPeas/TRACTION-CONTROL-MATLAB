@@ -26,18 +26,11 @@ getLoggedSignalValues = @(signalName) ...
 time = getLoggedSignalValues("vx").Time;
 vehicleSpeed = getLoggedSignalValues("vx").Data(:);
 longitudinalAccel = getLoggedSignalValues("ax").Data(:);
-requestedTorque = getLoggedSignalValues("Treq").Data(:);
-wheelSpeed = asFourColumnMatrix(getLoggedSignalValues("w").Data);
 slipRatio = asFourColumnMatrix(getLoggedSignalValues("slip").Data);
 commandedTorque = asFourColumnMatrix(getLoggedSignalValues("Tcmd").Data);
 normalLoad = asFourColumnMatrix(getLoggedSignalValues("Fz").Data);
-frictionUtilization = asFourColumnMatrix(getLoggedSignalValues("mu_util").Data);
-longitudinalForceCapacity = asFourColumnMatrix(getLoggedSignalValues("Fx_cap").Data);
-maxDriveTorque = asFourColumnMatrix(getLoggedSignalValues("Tmax_drv").Data);
 
 distance = cumtrapz(time, vehicleSpeed);
-wheelLabels = {'FL','FR','RL','RR'};
-eventTimes = P.launchEndTime;
 
 % --- Acceleration results ---
 targetDistance = 75;
