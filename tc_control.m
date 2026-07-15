@@ -1,38 +1,56 @@
-function [Tcmd, dI, e, sched, uff] = tc_control(slip, I, vx, Fz, Treq, Tmax_drv, ay, P)
+function [commandedMotorTorque, integralStateRate, slipError, ...
+    gainSchedule, feedforwardTorque] = tc_control(slipRatio, integralState, ...
+    vehicleSpeed, normalLoad, requestedTorque, gripLimitedDriveTorque, ...
+    lateralAcceleration, params)
 
-    slip = slip(:).';  I = I(:).';  Fz = max(Fz(:).',0);
-    Tmax_drv = Tmax_drv(:).';
-    sched = 1;
+    slipRatio = slipRatio(:).';
+    integralState = integralState(:).';
+    normalLoad = max(normalLoad(:).', 0);
+    gripLimitedDriveTorque = gripLimitedDriveTorque(:).';
+    gainSchedule = 1;
 
-    s_tgt = P.targetSlipRatio;                        % scalar
-    e     = s_tgt - slip;                             % 1x4
+    targetSlipRatio = params.targetSlipRatio;
+    slipError = targetSlipRatio - slipRatio;
 
-    if P.useGripFeedforward
-        mu = max((P.tirePeakMuBase - P.tirePeakMuLoadSensitivity.*Fz) .* ...
-            P.globalGripScale .* P.tireGripScaleByWheel, 0.1);
-        if P.useFrictionEllipse
-            u_lat = min(abs(ay)/P.gravity ./ mu, 1);
-            ell   = sqrt(max(1 - u_lat.^2, 0));
+    if params.useGripFeedforward
+        availableFrictionCoefficient = max((params.tirePeakMuBase - ...
+            params.tirePeakMuLoadSensitivity .* normalLoad) .* ...
+            params.globalGripScale .* params.tireGripScaleByWheel, 0.1);
+        if params.useFrictionEllipse
+            lateralFrictionUsage = min(abs(lateralAcceleration) / ...
+                params.gravity ./ availableFrictionCoefficient, 1);
+            longitudinalFrictionAvailability = sqrt(max(1 - ...
+                lateralFrictionUsage.^2, 0));
         else
-            ell   = ones(1,4);
+            longitudinalFrictionAvailability = ones(1, 4);
         end
-        Fxf = (mu.*ell) .* Fz .* sin(P.tireMagicFormulaC*atan(P.tireMagicFormulaB*s_tgt));
-        uff = Fxf .* P.wheelRadius ./ (P.gearRatio*P.drivetrainEfficiency);
+
+        feedforwardTireForce = (availableFrictionCoefficient .* ...
+            longitudinalFrictionAvailability) .* normalLoad .* ...
+            sin(params.tireMagicFormulaC * atan( ...
+            params.tireMagicFormulaB * targetSlipRatio));
+        feedforwardTorque = feedforwardTireForce .* params.wheelRadius ...
+            ./ (params.gearRatio * params.drivetrainEfficiency);
     else
-        uff = zeros(1,4);
+        feedforwardTorque = zeros(1, 4);
     end
-    
-    Kp = P.slipProportionalGain;  Ki = P.slipIntegralGain;
 
-    up      = Kp .* e;
-    u_unsat = uff + up + I;
+    proportionalTorque = params.slipProportionalGain .* slipError;
+    unlimitedTorqueCommand = feedforwardTorque + proportionalTorque + integralState;
 
-    wmot     = max(abs(vx)/P.wheelRadius*P.gearRatio, 1);       % motor speed [rad/s], floored
-    Pshare   = min(P.peakMotorPowerPerMotor, P.vehiclePowerLimit/4); % usable peak power / motor [W]
-    Tdrv_mot = min(P.peakMotorTorque, Pshare./wmot);             % drive torque envelope [Nm]
+    motorSpeed = max(abs(vehicleSpeed) / params.wheelRadius * ...
+        params.gearRatio, 1);
+    usablePowerPerMotor = min(params.peakMotorPowerPerMotor, ...
+        params.vehiclePowerLimit / 4);
+    motorDriveTorqueLimit = min(params.peakMotorTorque, ...
+        usablePowerPerMotor ./ motorSpeed);
 
-    Tmax = min( max(Treq,0), min(Tdrv_mot, Tmax_drv) );   % 1x4
-    Tcmd = min(max(u_unsat, 0), Tmax);
+    maximumAllowedTorque = min(max(requestedTorque, 0), ...
+        min(motorDriveTorqueLimit, gripLimitedDriveTorque));
+    commandedMotorTorque = min(max(unlimitedTorqueCommand, 0), ...
+        maximumAllowedTorque);
 
-    dI = Ki .* e + P.antiWindupGain .* (Tcmd - u_unsat); % back-calc anti-windup
+    integralStateRate = params.slipIntegralGain .* slipError + ...
+        params.antiWindupGain .* ...
+        (commandedMotorTorque - unlimitedTorqueCommand);
 end

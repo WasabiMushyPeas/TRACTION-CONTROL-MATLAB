@@ -1,27 +1,40 @@
-function dX = plant_long(X, Tcmd, Fx_ss, P)
-    vx   = X(1);
-    w    = X(2:5);                          % 4x1 col
-    Fxd  = X(6:9);                          % 4x1 col
-    Tmot = X(10:13);                        % 4x1 col
-    Tcmd  = Tcmd(:);                         % -> 4x1 col
-    Fx_ss = Fx_ss(:);                        % -> 4x1 col
+function stateDerivative = plant_long(stateVector, commandedMotorTorque, ...
+    steadyStateTireForce, params)
 
-    drag = 0.5*P.airDensity*P.dragCoefficient*P.frontalArea*vx.^2;
-    rr   = P.rollingResistanceCoefficient*P.vehicleMass*P.gravity*tanh(vx/0.5); % smooth sign near 0
-    dvx  = (sum(Fxd) - drag - rr) / P.vehicleMass;
+    vehicleSpeed = stateVector(1);
+    wheelSpeed = stateVector(2:5);
+    dynamicTireForce = stateVector(6:9);
+    motorTorque = stateVector(10:13);
 
-    Twheel = Tmot .* P.gearRatio .* P.drivetrainEfficiency;      % 4x1
-    dw     = (Twheel - Fxd.*P.wheelRadius) ./ P.combinedWheelInertia; % 4x1
-     
-    if P.useTireRelaxation
-        vrel  = max(max(abs(vx), abs(w).*P.wheelRadius), 1.0);   % 4x1: tire sweeps at wheel speed
-        tau_r = P.tireRelaxationLength ./ vrel;
-        dFxd  = (Fx_ss - Fxd) ./ tau_r;
+    commandedMotorTorque = commandedMotorTorque(:);
+    steadyStateTireForce = steadyStateTireForce(:);
+
+    aerodynamicDrag = 0.5 * params.airDensity * params.dragCoefficient * ...
+        params.frontalArea * vehicleSpeed.^2;
+    rollingResistance = params.rollingResistanceCoefficient * ...
+        params.vehicleMass * params.gravity * tanh(vehicleSpeed / 0.5);
+    vehicleAcceleration = (sum(dynamicTireForce) - aerodynamicDrag - ...
+        rollingResistance) / params.vehicleMass;
+
+    wheelTorque = motorTorque .* params.gearRatio .* ...
+        params.drivetrainEfficiency;
+    wheelAcceleration = (wheelTorque - dynamicTireForce .* params.wheelRadius) ...
+        ./ params.combinedWheelInertia;
+
+    if params.useTireRelaxation
+        tireContactSpeed = max(max(abs(vehicleSpeed), ...
+            abs(wheelSpeed) .* params.wheelRadius), 1.0);
+        tireForceTimeConstant = params.tireRelaxationLength ./ tireContactSpeed;
+        tireForceRate = (steadyStateTireForce - dynamicTireForce) ...
+            ./ tireForceTimeConstant;
     else
-        dFxd  = (Fx_ss - Fxd) ./ P.maxTimeStep;
+        tireForceRate = (steadyStateTireForce - dynamicTireForce) ...
+            ./ params.maxTimeStep;
     end
 
-    dTmot = (Tcmd - Tmot) ./ P.motorTorqueTimeConstant;   % 4x1
+    motorTorqueRate = (commandedMotorTorque - motorTorque) ...
+        ./ params.motorTorqueTimeConstant;
 
-    dX = [dvx; dw; dFxd; dTmot];            % 13x1 col
+    stateDerivative = [vehicleAcceleration; wheelAcceleration; ...
+        tireForceRate; motorTorqueRate];
 end

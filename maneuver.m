@@ -1,24 +1,24 @@
-function [Treq, ay] = maneuver(t, P)
+function [torqueRequest, lateralAcceleration] = maneuver(currentTime, params)
 
-    b = max(P.maneuverBlendTime, 1e-3);
-    sd = @(t0) smooth_step((t - t0)/b);     % 0->1 ramp centred after t0
+    blendTime = max(params.maneuverBlendTime, 1e-3);
+    launchToCornerProgress = smoothStep((currentTime - params.launchEndTime) / blendTime);
 
-    Tdrv_full  = P.fullDriveTorqueRequest;
-    Tdrv_corner= 0.5*P.fullDriveTorqueRequest;
+    launchTorqueRequest = params.fullDriveTorqueRequest;
+    cornerTorqueRequest = 0.5 * params.fullDriveTorqueRequest;
 
-    % torque request: full drive -> half drive through the corner
-    Treq = Tdrv_full - (Tdrv_full - Tdrv_corner) * sd(P.launchEndTime);
+    torqueRequest = launchTorqueRequest - ...
+        (launchTorqueRequest - cornerTorqueRequest) * launchToCornerProgress;
 
-    % lateral: 0 -> full corner
-    ay = P.cornerLateralAcceleration * sd(P.launchEndTime);
+    lateralAcceleration = ...
+        params.cornerLateralAcceleration * launchToCornerProgress;
     
-    if P.accelerationOnly
-        Treq = P.fullDriveTorqueRequest; ay = 0; return
+    if params.accelerationOnly
+        torqueRequest = params.fullDriveTorqueRequest;
+        lateralAcceleration = 0;
     end
 end
 
-function s = smooth_step(u)
-% clamped cubic smoothstep S(u)=u^2(3-2u), u in [0,1]
-    u = min(max(u, 0), 1);
-    s = u.*u.*(3 - 2*u);
+function progress = smoothStep(rawProgress)
+    progress = min(max(rawProgress, 0), 1);
+    progress = progress .* progress .* (3 - 2 * progress);
 end

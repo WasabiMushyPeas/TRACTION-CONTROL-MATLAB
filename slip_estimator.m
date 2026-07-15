@@ -1,14 +1,20 @@
-function slip = slip_estimator(w, vx, ay, P)
-    w = w(:).';                                 % force ROW 1x4
-    vref0 = max(abs(vx), P.lowSpeedFloor);
-    if P.useCornerSpeedEstimate
-        r    = ay / vref0;                      % steady-state yaw rate estimate
-        sgn  = [-1 1 -1 1];                      % [FL FR RL RR]: left -, right +
-        vx_c = vx + sgn*(r*P.trackWidth/2);     % 1x4 per-corner ground speed
+function slipRatio = slip_estimator(wheelAngularSpeed, vehicleSpeed, ...
+    lateralAcceleration, params)
+
+    wheelAngularSpeed = wheelAngularSpeed(:).';
+
+    vehicleSpeedForYawEstimate = max(abs(vehicleSpeed), params.lowSpeedFloor);
+    if params.useCornerSpeedEstimate
+        yawRateEstimate = lateralAcceleration / vehicleSpeedForYawEstimate;
+        cornerSideSign = [-1, 1, -1, 1];
+        cornerGroundSpeed = vehicleSpeed + cornerSideSign * ...
+            (yawRateEstimate * params.trackWidth / 2);
     else
-        vx_c = vx*ones(1,4);
+        cornerGroundSpeed = vehicleSpeed * ones(1, 4);
     end
-    vref = max(abs(vx_c), P.slipSpeedFloor);
-    slip = (w*P.wheelRadius - vx_c) ./ vref;    % 1x4
-    slip = max(min(slip, 1), -1);
+
+    referenceSpeed = max(abs(cornerGroundSpeed), params.slipSpeedFloor);
+    slipRatio = (wheelAngularSpeed * params.wheelRadius - cornerGroundSpeed) ...
+        ./ referenceSpeed;
+    slipRatio = max(min(slipRatio, 1), -1);
 end

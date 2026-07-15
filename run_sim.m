@@ -27,13 +27,13 @@ time = getLoggedSignalValues("vx").Time;
 schedule = getLoggedSignalValues("sched").Data(:);
 vehicleSpeed = getLoggedSignalValues("vx").Data(:);
 longitudinalAccel = getLoggedSignalValues("ax").Data(:);
-lateralAccel = getLoggedSignalValues("ay").Data(:);
+lateralAcceleration = getLoggedSignalValues("ay").Data(:);
 requestedTorque = getLoggedSignalValues("Treq").Data(:);
 wheelSpeed = asFourColumnMatrix(getLoggedSignalValues("w").Data);
 slipRatio = asFourColumnMatrix(getLoggedSignalValues("slip").Data);
 commandedTorque = asFourColumnMatrix(getLoggedSignalValues("Tcmd").Data);
 normalLoad = asFourColumnMatrix(getLoggedSignalValues("Fz").Data);
-muUtilization = asFourColumnMatrix(getLoggedSignalValues("mu_util").Data);
+frictionUtilization = asFourColumnMatrix(getLoggedSignalValues("mu_util").Data);
 longitudinalForceCapacity = asFourColumnMatrix(getLoggedSignalValues("Fx_cap").Data);
 maxDriveTorque = asFourColumnMatrix(getLoggedSignalValues("Tmax_drv").Data);
 
