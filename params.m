@@ -23,7 +23,7 @@ P.slipSpeedFloor = 1.0;                  % minimum speed in slip denominator [m/
 
 
 % --- Powertrain ---
-P.gearRatio = 10;                        % motor speed / wheel speed
+P.gearRatio = 12.5;                      % motor speed / wheel speed
 P.drivetrainEfficiency = 0.89;           % torque delivered after drivetrain losses
 P.peakMotorTorque = 21.0;                % peak torque per motor [Nm]
 P.peakMotorPowerPerMotor = 20.0e3;       % peak power per motor [W]
