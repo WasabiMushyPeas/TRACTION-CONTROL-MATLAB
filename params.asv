@@ -1,0 +1,5 @@
+
+
+%% ---------------- Simulation ----------------
+timedomain = 10;
+simout = sim("TC_SIM.slx", timedomain);

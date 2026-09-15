@@ -1,1 +1,0 @@
-# CP27E 4-Wheel Hub-Motor Traction Control (Simulink)
