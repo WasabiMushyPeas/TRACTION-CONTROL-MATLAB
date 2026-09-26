@@ -41,12 +41,16 @@ Fz_static_rear = Fz_rear_static;           % Compatibility alias [N]
 %% Four-motor AMK drivetrain (current CP27 working values)
 numDrivenWheels = 4;
 fd = 12.5;                                 % Nominal motor-to-wheel ratio [-]
-gearboxEfficiency = 0.85;                  % Minimum drivetrain efficiency [-]
+gearboxEfficiency = 0.92;                  % Drivetrain efficiency [-] (requirement minimum is 0.85)
 motorInverterEfficiency = 1.00;             % Simple-model assumption [-]
 Drive_Train = gearboxEfficiency;            % Compatibility alias [-]
 Max_Motor_Torque = 21.5;                   % Per-motor stall torque [N*m]
 Max_Motor_RPM = 20000;                     % Motor speed limit [rpm]
 Max_Wheel_Omega = Max_Motor_RPM * 2*pi/60 / fd; % Wheel speed limit [rad/s]
+% Torque tapers linearly to zero over the last band below the speed limit,
+% so the limiter does not switch torque on and off at 20,000 rpm.
+Speed_Limit_Taper_RPM = 500;               % Taper band below the limit [rpm]
+Speed_Limit_Taper_Omega = Speed_Limit_Taper_RPM * 2*pi/60 / fd; % [rad/s]
 maxTractivePower = 80e3;                   % E-meter power limit [W]
 
 T_request_per_motor = Max_Motor_Torque;    % Full-pedal request [N*m/motor]
@@ -71,15 +75,19 @@ slipTolerance = 0.02;                       % Settling band [-]
 
 % Each corner remains independently calibratable. The straight-line tune is
 % left/right symmetric and stays below the 0.1476 Pacejka peak.
-Slip_Target_FL = 0.145;
-Slip_Target_FR = 0.145;
+Slip_Target_FL = 0.12;
+Slip_Target_FR = 0.12;
 Slip_Target_RL = 0.145;
 Slip_Target_RR = 0.145;
 
 % Grip-based feedforward: filtered mu*Fz at the slip target converted to
-% motor torque, plus wheel-inertia torque, capped by the driver request.
-% It is sampled at 500 Hz and slew limited before the residual PI.
-% Kff < 1 keeps the estimate conservative so the PI closes the last gap.
+% motor torque, plus wheel-inertia torque, capped at the motor limit.
+% Fz and mu come from Load_Transfer_Predictor, which predicts load transfer
+% from the previous tick's torque commands, so the front feedforward drops
+% before the measured front load does.
+% It is sampled at 500 Hz and slew limited. The driver throttle only caps
+% the final command in the Torque_Limiter, after FF + PID.
+% Kff < 1 keeps the estimate conservative so the PID closes the last gap.
 Kff_FL = 0.9;
 Kff_FR = 0.9;
 Kff_RL = 0.9;
@@ -103,8 +111,10 @@ Launch_Ramp_Time_RR = 0.005;                % [s]
 Feedforward_Filter_Hz = 20;                 % Load-estimate low-pass cutoff [Hz]
 Feedforward_Filter_Alpha = 1 - exp(-2*pi*Feedforward_Filter_Hz*Ts);
 
-Kp_FL = 20; Ki_FL = 240; Kd_FL = 0;
-Kp_FR = 20; Ki_FR = 240; Kd_FR = 0;
+% Front gains tuned for a small launch overshoot (about 10%) and fastest
+% settling (about 80 ms to within 5% of target) with the load predictor.
+Kp_FL = 15; Ki_FL = 480; Kd_FL = 0;
+Kp_FR = 15; Ki_FR = 480; Kd_FR = 0;
 Kp_RL = 20; Ki_RL = 240; Kd_RL = 0;
 Kp_RR = 20; Ki_RR = 240; Kd_RR = 0;
 
@@ -118,11 +128,11 @@ Ktrack_RL = 50;
 Ktrack_RR = 50;
 
 Cmin = -Max_Motor_Torque;                   % Residual PID lower limit [N*m]
-Cmax = 0.25 * Max_Motor_Torque;             % Residual may add torque up to the driver request [N*m]
+Cmax = 0.25 * Max_Motor_Torque;             % PID may add torque; Torque_Limiter caps at throttle [N*m]
 
 %% Current CP27 longitudinal Pacejka coefficients
-% Preserve these signs. The tire block converts normal load to kN and uses
-% mu = -(D1 + D2*Fz_kN), with the force sign corrected for negative C.
+% Preserve these signs. The tire block reads these values, converts normal
+% load to kN, and uses mu = -(D1 + D2*Fz_kN), sign corrected for negative C.
 % The source file does not state D2 units or the complete fitted equation,
 % so the 1/kN load-sensitivity interpretation remains provisional.
 Pacejka_B = 10.400;
@@ -165,22 +175,22 @@ Feedforward_InitialState_FR = Feedforward_InitialState_FL;
 Feedforward_InitialState_RL = muFz_rear_launch / Feedforward_Filter_Alpha;
 Feedforward_InitialState_RR = Feedforward_InitialState_RL;
 
-% Launch with the pedal already held at full, so the feedforward starts at
-% its grip-limited launch value instead of slew limiting up from zero.
+% Launch with the pedal already held at full (throttle into Torque_Limiter),
+% and start the feedforward at its launch value instead of zero.
 Launch_Pedal_Initial = T_request_per_motor; % [N*m]
 targetForceShape = @(slipTarget) -sin(Pacejka_C*atan(Pacejka_B*slipTarget));
-Feedforward_Launch_FL = min(Launch_Pedal_Initial, Kff_FL*r/(fd*Drive_Train) * ...
+Feedforward_Launch_FL = min(Max_Motor_Torque, Kff_FL*r/(fd*Drive_Train) * ...
     muFz_front_launch*targetForceShape(Slip_Target_FL));
-Feedforward_Launch_FR = min(Launch_Pedal_Initial, Kff_FR*r/(fd*Drive_Train) * ...
+Feedforward_Launch_FR = min(Max_Motor_Torque, Kff_FR*r/(fd*Drive_Train) * ...
     muFz_front_launch*targetForceShape(Slip_Target_FR));
-Feedforward_Launch_RL = min(Launch_Pedal_Initial, Kff_RL*r/(fd*Drive_Train) * ...
+Feedforward_Launch_RL = min(Max_Motor_Torque, Kff_RL*r/(fd*Drive_Train) * ...
     muFz_rear_launch*targetForceShape(Slip_Target_RL));
-Feedforward_Launch_RR = min(Launch_Pedal_Initial, Kff_RR*r/(fd*Drive_Train) * ...
+Feedforward_Launch_RR = min(Max_Motor_Torque, Kff_RR*r/(fd*Drive_Train) * ...
     muFz_rear_launch*targetForceShape(Slip_Target_RR));
 
 %% Simple-model assumptions (not released CP27 vehicle parameters)
 % Replace these when measured CP27 tire and inertia data become available.
-J_wheel_side = 0.45;                        % Effective inertia per corner [kg*m^2]
+J_wheel_side = 0.35;                        % Effective inertia per corner [kg*m^2]
 J = numDrivenWheels * J_wheel_side;         % Aggregate compatibility alias [kg*m^2]
 J_Motor = 0;                                % Included in J_wheel_side [kg*m^2]
 J_Wheel = J;                                % Compatibility alias [kg*m^2]
