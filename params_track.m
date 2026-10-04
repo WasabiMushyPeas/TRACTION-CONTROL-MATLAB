@@ -1,14 +1,16 @@
-%% CP27E track traction-control simulation: corner + low-grip patch at full throttle
-% Same car and the same traction controller as params.m / TC_organized.
-% TC_track adds a track to drive on, with the pedal held flat the whole way:
-%   - a launch straight with a low-grip patch (water or ice) on it,
-%   - a corner, so lateral load transfer unloads the inside wheels and the
-%     tires share their grip between cornering and traction,
-%   - an exit straight to the end of the course.
+%% CP27E MIS lap traction-control simulation
+% Same car and the same traction controller as params.m / TC_organized,
+% driven round one lap of the MIS track (GPS-derived, MIS_Simulink_Track):
+%   - a driver block floors it whenever the car is at or below a target
+%     speed for each corner, and lifts and brakes above it, so every corner
+%     exit is a full-throttle traction test,
+%   - lateral load transfer and a combined-slip tire, so the tires share
+%     their grip between cornering and traction,
+%   - optional low-grip sections (Low_Grip_Sections) anywhere on the lap.
 % The controller blocks are unchanged, so this tests the controller that
 % the C++ port implements. The controller still assumes the dry grip
-% factor and a single vehicle speed for all four wheels; the plant now
-% has per-wheel road grip and per-wheel ground speeds.
+% factor and a single vehicle speed for all four wheels; the plant has
+% per-wheel road grip and per-wheel ground speeds.
 % TC_track's InitFcn sets TC_paramsOnly and runs this file, so pressing
 % Run in Simulink loads only the parameters (the guard below stops there).
 
@@ -208,77 +210,77 @@ tau_motor = 0.005;                          % Torque-response time constant [s],
 % The lag allows a small delivered-power overshoot above the command limit.
 slipSpeedFloor = 0.50;                      % Low-speed slip denominator [m/s]
 
-%% Track layout
-% Distance s is measured along the driven line from the CG start position.
-% The corner is an entry ramp, a constant-radius arc, and an exit ramp.
-% Curvature ramps linearly on the ramps (clothoids), so the lateral
-% acceleration demand v^2*kappa builds smoothly.
-%
-% Flat out from a standstill, the car can only be traction limited in a
-% corner on a corner exit: any corner reached after a straight launch is
-% taken above about 20 m/s, where the 80 kW limit holds torque below the
-% tire limit, and a tight one cannot be held at that speed. So the default
-% is a standing start at the end of a hairpin apex, flat out on the exit,
-% with the patch on the exit straight. For a corner after the launch,
-% set e.g. Corner_Start = 25 and Corner_Radius = 60.
-Corner_Direction = 1;                       % +1 left turn, -1 right turn
-Corner_Entry_Length = 10;                   % Curvature ramp-in length [m]
-Corner_Radius = 15;                         % Constant-radius (apex) section [m]
-Corner_Arc_Length = 10;                     % Constant-radius length [m]
-Corner_Exit_Length = 30;                    % Curvature ramp-out length [m]
-Corner_Start = -(Corner_Entry_Length + Corner_Arc_Length); % Entry ramp start [m]; < 0 starts in the corner
-Course_Length = 100;                        % The simulation stops here [m]
+%% MIS track
+% MIS_Simulink_Track/mis_track.mat is the smoothed GPS path of one MIS lap:
+% distance s, x east, y north, heading (radians from east), and signed
+% curvature (positive = left turn). The car does one lap from a standing
+% start. Road width, banking, and grade are not in the data; the road
+% drawn in the animation is a nominal 5 m.
+% The GPS lap begins in a tight hairpin, so the lap is re-started at
+% Track_Start_Distance along the GPS lap. 100 m is the start of the
+% longest straight (GPS 96-173 m). All distances below (low-grip sections,
+% plots) are measured from this start.
+Track_Start_Distance = 100;                 % Start line, GPS lap distance [m]
+misTrack = load(fullfile(fileparts(mfilename('fullpath')), ...
+    'MIS_Simulink_Track', 'mis_track.mat'), 'track');
+misTrack = misTrack.track;
+Track_Length = misTrack.length_m;                          % One lap [m]
+Track_Breakpoints = double(misTrack.s_m(:));               % [m]
+gpsDistance = mod(Track_Breakpoints + Track_Start_Distance, Track_Length);
+atGpsDistance = @(field) interp1(Track_Breakpoints, double(field(:)), gpsDistance);
+Track_Curvature = atGpsDistance(misTrack.curvature_1pm);   % [1/m]
+Track_X = atGpsDistance(misTrack.x_m);                     % East [m]
+Track_Y = atGpsDistance(misTrack.y_m);                     % North [m]
+Track_Heading = unwrap(atan2(atGpsDistance(misTrack.heading_sin), ...
+    atGpsDistance(misTrack.heading_cos)));                 % Unwrapped [rad]
+Track_Recorded_Speed = atGpsDistance(misTrack.speed_recorded_mps); % GPS, comparison only [m/s]
+Track_Recorded_Lap_Time = misTrack.time_recorded_s(end) - misTrack.time_recorded_s(1); % [s]
+clear misTrack gpsDistance atGpsDistance
+Course_Length = Track_Length;               % The simulation stops after one lap [m]
 
-assert(Corner_Entry_Length > 0 && Corner_Arc_Length > 0 && ...
-    Corner_Exit_Length > 0, 'CP27E:CornerGeometry', ...
-    'Corner entry, arc, and exit lengths must be positive.');
-Corner_End = Corner_Start + Corner_Entry_Length + Corner_Arc_Length + ...
-    Corner_Exit_Length;                                     % [m]
-Corner_Angle_deg = rad2deg((Corner_Arc_Length + 0.5*(Corner_Entry_Length + ...
-    Corner_Exit_Length))/Corner_Radius);                   % Whole corner [deg]
-Track_Breakpoints = [min(Corner_Start, 0) - 10, Corner_Start, ...
-    Corner_Start + Corner_Entry_Length, Corner_End - Corner_Exit_Length, ...
-    Corner_End, max(Course_Length, Corner_End) + 50];       % [m]
-Track_Curvature = Corner_Direction/Corner_Radius*[0, 0, 1, 1, 0, 0]; % [1/m]
-
-%% Low-grip patch (water or ice)
-% The patch scales tire friction the way Grip_Fact does. Each wheel reads
-% the surface at its own position, so the fronts reach the patch a
-% wheelbase before the rears, and the patch can cover one side (split mu).
-% The controller is not told about the patch; it keeps assuming Grip_Fact.
-% On the exit straight the car is power limited (about 25 m/s), so water
-% there barely makes the wheels slip; ice does. Water hurts on the corner
-% exit while the car is still traction limited: try Low_Grip_Start = 12.
-Low_Grip_Surface = "ice";                   % "water", "ice", or "dry" (no patch)
-switch Low_Grip_Surface
-    case "water"
-        Low_Grip_Fact = 0.30;               % mu about 0.74 at static load (half of dry)
-    case "ice"
-        Low_Grip_Fact = 0.06;               % mu about 0.15 at static load
-    case "dry"
-        Low_Grip_Fact = Grip_Fact;          % Baseline run without a patch
-    otherwise
-        error('CP27E:LowGripSurface', ...
-            'Low_Grip_Surface must be "water", "ice", or "dry".');
-end
-Low_Grip_Start = 40;                        % Patch start [m]
-Low_Grip_Length = 6;                        % Patch length [m]
-Low_Grip_Sides = "both";                    % "both", "left", or "right"
+%% Low-grip sections
+% One row per section: {start [m], length [m], grip factor [-], sides}.
+% The grip factor scales tire friction like Grip_Fact (dry = 0.60): about
+% 0.45 is a damp line, 0.30 standing water, 0.06 ice. Sides is "both",
+% "left", or "right" (split mu). Each wheel reads the surface at its own
+% position. The controller is not told; it keeps assuming Grip_Fact.
+% Use Low_Grip_Sections = {} for a dry lap.
+Low_Grip_Sections = {
+    220, 15, 0.30, "both"                   % Standing water on a corner exit
+    530, 10, 0.45, "left"                   % Damp left side on a corner exit
+    };
 Surface_Transition_Length = 0.2;            % Grip changes over about one contact patch [m]
 
-Low_Grip_End = Low_Grip_Start + Low_Grip_Length;            % [m]
-Surface_Breakpoints = [min(Low_Grip_Start, 0) - 10, ...
-    Low_Grip_Start - Surface_Transition_Length, ...
-    Low_Grip_Start, Low_Grip_End, Low_Grip_End + Surface_Transition_Length, ...
-    max(Course_Length, Low_Grip_End) + 50];                 % [m]
-patchProfile = [0, 0, 1, 1, 0, 0];
-Low_Grip_Wheels = [any(Low_Grip_Sides == ["both", "left"]), ...
-    any(Low_Grip_Sides == ["both", "right"])];              % [left, right]
-% Rows: left side, right side. Columns: Surface_Breakpoints.
-Surface_Grip_Table = Grip_Fact + (Low_Grip_Fact - Grip_Fact) * ...
-    [Low_Grip_Wheels(1)*patchProfile; Low_Grip_Wheels(2)*patchProfile];
-Low_Grip_Wheels = Low_Grip_Wheels([1, 2, 1, 2]);           % FL FR RL RR
-clear patchProfile
+lowGripCount = size(Low_Grip_Sections, 1);
+Low_Grip_Start = zeros(lowGripCount, 1);    % [m]
+Low_Grip_End = zeros(lowGripCount, 1);      % [m]
+Low_Grip_Fact = zeros(lowGripCount, 1);     % [-]
+Low_Grip_Wheels = false(lowGripCount, 4);   % Wheels each section affects (FL FR RL RR)
+surfaceBreaks = [-10, Course_Length + 50];
+for section = 1:lowGripCount
+    [Low_Grip_Start(section), sectionLength, Low_Grip_Fact(section), sides] = ...
+        Low_Grip_Sections{section, :};
+    assert(any(sides == ["both", "left", "right"]), 'CP27E:LowGripSides', ...
+        'Low-grip section %d: sides must be "both", "left", or "right".', section);
+    Low_Grip_End(section) = Low_Grip_Start(section) + sectionLength;
+    Low_Grip_Wheels(section, :) = [sides ~= "right", sides ~= "left"]*[1 0 1 0; 0 1 0 1] > 0;
+    surfaceBreaks = [surfaceBreaks, Low_Grip_Start(section) + [-Surface_Transition_Length, 0], ...
+        Low_Grip_End(section) + [0, Surface_Transition_Length]]; %#ok<AGROW>
+end
+% Surface_Grip_Map: rows are the left and right sides of the road, columns
+% Surface_Breakpoints; grip ramps over Surface_Transition_Length at each edge.
+Surface_Breakpoints = unique(surfaceBreaks);
+Surface_Grip_Table = Grip_Fact*ones(2, numel(Surface_Breakpoints));
+for section = 1:lowGripCount
+    weight = min(max(min(Surface_Breakpoints - (Low_Grip_Start(section) - ...
+        Surface_Transition_Length), Low_Grip_End(section) + ...
+        Surface_Transition_Length - Surface_Breakpoints)/Surface_Transition_Length, 0), 1);
+    sectionGrip = Grip_Fact + (Low_Grip_Fact(section) - Grip_Fact)*weight;
+    for side = find(Low_Grip_Wheels(section, 1:2))
+        Surface_Grip_Table(side, :) = min(Surface_Grip_Table(side, :), sectionGrip);
+    end
+end
+clear surfaceBreaks section sectionLength sides weight sectionGrip side
 
 %% Wheel positions relative to the CG (order FL, FR, RL, RR)
 Wheel_Longitudinal_Position = [cg_f; cg_f; -cg_r; -cg_r];  % Forward of CG [m]
@@ -295,8 +297,40 @@ LLTD_Front = 0.50;                          % Front share of lateral load transf
 Lateral_Mu_Ratio = 1.00;                    % Lateral / longitudinal peak mu [-]
 Pacejka_Slip_Peak = tan(pi/(2*abs(Pacejka_C)))/Pacejka_B;  % 0.148 [-]
 
+%% Driver
+% The Driver block follows a target speed: flat out whenever the car is at
+% or below it, lifting over Driver_Lift_Band above it, and braking beyond
+% that. The target is the steady cornering speed on dry road using
+% Driver_Grip_Use of the tire friction (with downforce), cut back so the
+% car can brake into every corner at Driver_Brake_Decel, and kept below
+% the motor speed taper. The driver plans for dry road everywhere.
+% Brakes act on the car body: they get the car round the lap, and the TC
+% is only tested on throttle. The driver also steers back to the line
+% after running wide, once the tires have grip to spare.
+Driver_Grip_Use = 0.85;                     % Fraction of dry grip planned for corners [-]
+Driver_Brake_Decel = 1.2*gravity;           % Planned braking [m/s^2]
+Driver_Brake_Max_Decel = 1.5*gravity;       % Full brake pedal [m/s^2]
+Driver_Preview_Time = 0.3;                  % Looks this far ahead at the target [s]
+Driver_Lift_Band = 0.5;                     % Throttle fades to zero this far over target [m/s]
+Driver_Brake_Band = 1.0;                    % Brake builds to full over this much more [m/s]
+Driver_Line_Recovery_Hz = 0.3;              % Steering back to the line [Hz]
+
+muPlan = Driver_Grip_Use*tireMuAtLoad(Mv*gravity/4);
+cornerDenominator = Mv*abs(Track_Curvature) - muPlan*0.5*rho*CLA;
+speedCap = Max_Wheel_Omega*r*(1 - Speed_Limit_Taper_RPM/Max_Motor_RPM); % Taper start [m/s]
+Driver_Speed_Target = speedCap*ones(size(Track_Curvature));            % [m/s]
+canLimit = cornerDenominator > 0;
+Driver_Speed_Target(canLimit) = min(speedCap, ...
+    sqrt(muPlan*Mv*gravity./cornerDenominator(canLimit)));
+for point = numel(Driver_Speed_Target) - 1:-1:1
+    Driver_Speed_Target(point) = min(Driver_Speed_Target(point), ...
+        sqrt(Driver_Speed_Target(point + 1)^2 + 2*Driver_Brake_Decel* ...
+        (Track_Breakpoints(point + 1) - Track_Breakpoints(point))));
+end
+clear muPlan cornerDenominator speedCap canLimit point
+
 %% Simulation
-timeMax = 15;                               % Simulation timeout [s]
+timeMax = 150;                              % Simulation timeout [s]
 timedomain = timeMax;                       % Compatibility alias [s]
 
 % Stop here when the model's InitFcn only needs the parameters.
@@ -304,14 +338,14 @@ if exist('TC_paramsOnly', 'var') && TC_paramsOnly
     return
 end
 
-%% Run TC_track at full throttle
+%% Run TC_track: one MIS lap
 modelName = 'TC_track';
 in = Simulink.SimulationInput(modelName);
 in = in.setModelParameter('StopTime', num2str(timeMax));
 out = sim(in);
 simout = out;  % Compatibility alias for interactive workspace use.
 
-%% Distance axis and course time
+%% Distance axis and lap time
 distanceTime = out.distance.Time(:);
 distanceData = out.distance.Data(:);
 if isempty(distanceData) || any(~isfinite(distanceData))
@@ -320,107 +354,103 @@ if isempty(distanceData) || any(~isfinite(distanceData))
 end
 if distanceData(end) < Course_Length - 1e-3
     error('CP27E:CourseNotFinished', ...
-        ['The simulation stopped at %.2f m after %.2f s without reaching ' ...
-         'the %.0f m course end. Increase timeMax or inspect the model.'], ...
+        ['The simulation stopped at %.1f m after %.1f s without finishing ' ...
+         'the %.0f m lap. Increase timeMax or inspect the model.'], ...
         distanceData(end), distanceTime(end), Course_Length);
 end
 finishIndex = find(distanceData >= Course_Length, 1, 'first');
 finishTime = interp1(distanceData(finishIndex-1:finishIndex), ...
     distanceTime(finishIndex-1:finishIndex), Course_Length);
-finishSpeed = interp1(out.vehicleSpeed.Time(:), out.vehicleSpeed.Data(:), ...
-    finishTime);
 
 % Distance travelled at each logged sample (logs run at 10 kHz or 500 Hz).
 atDistance = @(ts) interp1(distanceTime, distanceData, ts.Time(:), ...
     'linear', 'extrap');
+[uniqueDistance, firstIndex] = unique(distanceData, 'first');
+timeAtDistance = @(d) interp1(uniqueDistance, distanceTime(firstIndex), ...
+    min(max(d, 0), Course_Length));
 
 wheelLabels = {'FL', 'FR', 'RL', 'RR'};
 slipTargets = [Slip_Target_FL, Slip_Target_FR, ...
     Slip_Target_RL, Slip_Target_RR];
-isInside = Corner_Direction*Wheel_Lateral_Position.' > 0;   % Inside wheels
 
+slipTime = out.trueSlips.Time(:);
 trueSlip = logData(out.trueSlips);           % Tire slip (own ground speed)
 trueSlipS = atDistance(out.trueSlips);
 measuredSlip = logData(out.wheelSlips);      % Controller slip (CG speed)
 measuredSlipS = atDistance(out.wheelSlips);
-plantSpeedAtSlip = interp1(out.vehicleSpeed.Time(:), ...
-    out.vehicleSpeed.Data(:), out.trueSlips.Time(:));
+measuredSlipAtTrue = interp1(out.wheelSlips.Time(:), measuredSlip, slipTime, ...
+    'previous', 'extrap');
+plantSpeedAtSlip = interp1(out.vehicleSpeed.Time(:), out.vehicleSpeed.Data(:), slipTime);
 wheelPosition = trueSlipS + Wheel_Longitudinal_Position.'; % Each wheel's s [m]
 
 ayDemand = logData(out.lateralAccelDemand);
 ayActual = logData(out.lateralAccel);
 lateralS = atDistance(out.lateralAccel);
-lateralOffset = logData(out.lateralOffset);
+ayAtSlip = interp1(out.lateralAccel.Time(:), ayActual, slipTime);
+lateralOffset = logData(out.lateralOffset);  % Left of the line [m]
 lateralOffsetS = atDistance(out.lateralOffset);
 gripUse = logData(out.gripUse);
 gripUseS = atDistance(out.gripUse);
 lateralForce = logData(out.lateralForces);
 normalLoad = logData(out.normalLoads);
 normalLoadS = atDistance(out.normalLoads);
+driverLog = logData(out.driver);             % [throttle N*m, brake N, target m/s]
+driverS = atDistance(out.driver);
+throttleAtSlip = interp1(out.driver.Time(:), driverLog(:, 1), slipTime, 'previous');
 
-%% Launch metrics (first 8 m or up to the patch, v >= 2 m/s)
-launchEnd = min(8, Low_Grip_Start - cg_f);
-launchMask = trueSlipS <= launchEnd & plantSpeedAtSlip >= 2;
-launchPeakSlip = max(trueSlip(launchMask, :), [], 1);
-
-%% Low-grip patch metrics, per wheel
-% On the patch: the wheel's own position is on the low-grip section.
-% Recovery: time from leaving the patch until the PID has wound back to
-% within 1 N*m of its value before the patch, i.e. the controller has
-% stopped holding torque back for the low grip it no longer has.
-pidAtSlip = interp1(out.pidCorrections.Time(:), out.pidCorrections.Data, ...
-    out.trueSlips.Time(:), 'previous', 'extrap');
-patchPeakSlip = nan(1, 4);
-patchRecoveryTime = nan(1, 4);
-patchEntryTime = nan(1, 4);
-patchMinPid = nan(1, 4);
-for wheelIndex = find(Low_Grip_Wheels & Low_Grip_Fact ~= Grip_Fact)
-    onPatch = wheelPosition(:, wheelIndex) >= Low_Grip_Start & ...
-        wheelPosition(:, wheelIndex) <= Low_Grip_End;
-    if ~any(onPatch)
-        continue
-    end
-    beforePatch = find(wheelPosition(:, wheelIndex) < ...
-        Low_Grip_Start - Surface_Transition_Length, 1, 'last');
-    afterPatch = find(wheelPosition(:, wheelIndex) >= ...
-        Low_Grip_End + Surface_Transition_Length, 1, 'first');
-    patchEntryTime(wheelIndex) = out.trueSlips.Time(find(onPatch, 1, 'first'));
-    patchPeakSlip(wheelIndex) = max(trueSlip(onPatch, wheelIndex));
-    patchMinPid(wheelIndex) = min(pidAtSlip(beforePatch:afterPatch, wheelIndex));
-    recovered = find(pidAtSlip(afterPatch:end, wheelIndex) >= ...
-        pidAtSlip(beforePatch, wheelIndex) - 1, 1, 'first');
-    if ~isempty(recovered)
-        patchRecoveryTime(wheelIndex) = out.trueSlips.Time(afterPatch + recovered - 1) - ...
-            out.trueSlips.Time(afterPatch);
-    end
+%% Corner exits: floored while still cornering
+% Inside/outside wheels follow the direction of each turn.
+exitMask = throttleAtSlip >= 0.99*Max_Motor_Torque & ...
+    abs(ayAtSlip) >= 0.5*gravity & plantSpeedAtSlip >= 2;
+turningLeft = ayAtSlip > 0;
+insideSlip = [turningLeft.*trueSlip(:, 1) + ~turningLeft.*trueSlip(:, 2), ...
+    turningLeft.*trueSlip(:, 3) + ~turningLeft.*trueSlip(:, 4)];   % [front, rear]
+outsideSlip = [~turningLeft.*trueSlip(:, 1) + turningLeft.*trueSlip(:, 2), ...
+    ~turningLeft.*trueSlip(:, 3) + turningLeft.*trueSlip(:, 4)];
+slipBias = measuredSlipAtTrue - trueSlip;    % Controller minus tire slip
+insideBias = mean([turningLeft.*slipBias(:, 1) + ~turningLeft.*slipBias(:, 2); ...
+    turningLeft.*slipBias(:, 3) + ~turningLeft.*slipBias(:, 4)], 'omitnan');
+exitTime = nnz(exitMask)*mean(diff(slipTime));
+if any(exitMask)
+    exitInsidePeak = max(insideSlip(exitMask, :), [], 1);
+    exitOutsidePeak = max(outsideSlip(exitMask, :), [], 1);
+    exitInsideMean = mean(insideSlip(exitMask, :), 1);
+    exitOutsideMean = mean(outsideSlip(exitMask, :), 1);
+    insideBias = mean([turningLeft(exitMask).*slipBias(exitMask, 1) + ...
+        ~turningLeft(exitMask).*slipBias(exitMask, 2); ...
+        turningLeft(exitMask).*slipBias(exitMask, 3) + ...
+        ~turningLeft(exitMask).*slipBias(exitMask, 4)]);
 end
 
-%% Corner metrics
-% The driven part of the corner (it may start behind the start line).
-cornerFrom = max(Corner_Start, 0);
-cornerMask = trueSlipS >= cornerFrom & trueSlipS <= Corner_End;
-cornerPeakSlip = max(trueSlip(cornerMask, :), [], 1);
-cornerMeanSlip = mean(trueSlip(cornerMask, :), 1);
-measuredSlipAtTrue = interp1(out.wheelSlips.Time(:), measuredSlip, ...
-    out.trueSlips.Time(:), 'previous', 'extrap');
-cornerSlipBias = mean(measuredSlipAtTrue(cornerMask, :) - ...
-    trueSlip(cornerMask, :), 1);           % Controller minus true slip
-cornerLateralMask = lateralS >= cornerFrom & lateralS <= Corner_End;
-peakLateralG = max(abs(ayActual(cornerLateralMask))) / gravity;
-demandMask = cornerLateralMask & abs(ayDemand) > 1;
-lateralShortfall = abs(ayDemand(demandMask)) - abs(ayActual(demandMask));
-maxLateralShortfall = max([lateralShortfall; 0]);
-ranWide = maxLateralShortfall > 0.01;
-if ranWide
-    firstWideIndex = find(demandMask & abs(ayDemand) - abs(ayActual) > 0.01, ...
-        1, 'first');
-    firstWideDistance = lateralS(firstWideIndex);
+% PID state each time the driver goes back to full throttle: while lifted,
+% tracking anti-windup drives the PID toward minus the feedforward.
+floored = driverLog(:, 1) >= 0.99*Max_Motor_Torque;
+reapplyIndex = find(diff(floored) == 1) + 1;
+reapplyPid = interp1(out.pidCorrections.Time(:), out.pidCorrections.Data, ...
+    out.driver.Time(reapplyIndex), 'previous', 'extrap');
+
+%% Low-grip section metrics, per section and wheel
+% On the section: the wheel's own position is on it, or within one
+% wheelbase after it (the wheel is still spinning down).
+sectionPeakSlip = nan(lowGripCount, 4);
+sectionOverTime = nan(lowGripCount, 4);     % Time above 1.5x target slip [s]
+sectionThrottle = nan(lowGripCount, 1);
+slipSampleTime = mean(diff(slipTime));
+for section = 1:lowGripCount
+    onSection = trueSlipS >= Low_Grip_Start(section) - cg_f & ...
+        trueSlipS <= Low_Grip_End(section) + cg_r;
+    sectionThrottle(section) = mean(throttleAtSlip(onSection))/Max_Motor_Torque;
+    for wheelIndex = find(Low_Grip_Wheels(section, :))
+        onPatch = wheelPosition(:, wheelIndex) >= Low_Grip_Start(section) & ...
+            wheelPosition(:, wheelIndex) <= Low_Grip_End(section) + W;
+        if ~any(onPatch)
+            continue
+        end
+        sectionPeakSlip(section, wheelIndex) = max(trueSlip(onPatch, wheelIndex));
+        sectionOverTime(section, wheelIndex) = slipSampleTime*nnz(onPatch & ...
+            trueSlip(:, wheelIndex) > 1.5*slipTargets(wheelIndex));
+    end
 end
-maxLateralOffset = max(lateralOffset);
-cornerUseMask = gripUseS >= cornerFrom & gripUseS <= Corner_End;
-cornerPeakGripUse = max(gripUse(cornerUseMask, :), [], 1);
-cornerLoadMask = normalLoadS >= cornerFrom & normalLoadS <= Corner_End;
-cornerMinLoad = min(normalLoad(cornerLoadMask, :), [], 1);
 
 %% Electrical power and motor speed
 wheelOmega = out.wheelSpeeds.Data / r;
@@ -438,12 +468,14 @@ commandedExcessEnergyFraction = trapz(out.torqueCommands.Time(:), ...
     max(trapz(out.torqueCommands.Time(:), max(commandedElectricalPower, 0)), eps);
 
 %% Numerical consistency checks
+brakeAtAccel = interp1(out.driver.Time(:), driverLog(:, 2), ...
+    out.acceleration.Time(:), 'previous', 'extrap');
 normalLoadResidual = max(abs(sum(out.normalLoads.Data, 2) - ...
     (Mv * gravity + out.downforce.Data)));
 tireForceResidual = max(abs(out.totalTireForce.Data - ...
     sum(out.tireForces.Data, 2)));
 vehicleForceResidual = max(abs(Mv * out.acceleration.Data - ...
-    (out.totalTireForce.Data - out.aeroDrag.Data)));
+    (out.totalTireForce.Data - out.aeroDrag.Data - brakeAtAccel)));
 lateralForceResidual = max(abs(sum(lateralForce, 2) - Mv * ayActual));
 requestAtCommandTime = interp1(out.torqueRequests.Time(:), ...
     out.torqueRequests.Data, out.torqueCommands.Time(:), 'previous', 'extrap');
@@ -466,17 +498,17 @@ assert(lateralForceResidual <= forceBalanceTolerance, ...
 assert(requestTorqueViolation <= constraintTolerance, ...
     'CP27E:TorqueRequestLimit', ...
     'A commanded torque exceeded its pre-limit TC request.');
-% The power limit uses the previous 2 ms tick, so a wheel spinning up on the
-% patch or in the corner can push the command briefly over the limit. That
-% is reported as a warning instead of stopping the run.
+% The power limit uses the previous 2 ms tick, so a wheel spinning up or the
+% TC releasing torque quickly can push the command briefly over the limit.
+% That is reported as a warning instead of stopping the run.
 powerOvershootPercent = 100 * max(commandPowerViolation, 0) / maxTractivePower;
 if powerOvershootPercent > 1 || commandedExcessEnergyFraction > 0.01
     warning('CP27E:CommandPowerLimit', ...
         'Commanded power peaked %.1f%% over the limit (excess energy %.3f%%).', ...
         powerOvershootPercent, 100 * commandedExcessEnergyFraction);
 end
-% A wheel spinning up on the patch near top speed can overrun the speed
-% taper during the motor torque lag, so this is reported, not an error.
+% A wheel spinning up near top speed can overrun the speed taper during the
+% motor torque lag, so this is reported, not an error.
 if motorSpeedViolation > constraintTolerance
     warning('CP27E:MotorSpeedLimit', ...
         'A motor reached %.0f rpm, %.0f rpm over the speed limit.', ...
@@ -484,51 +516,43 @@ if motorSpeedViolation > constraintTolerance
 end
 
 %% Report
-turnName = 'left';
-if Corner_Direction < 0
-    turnName = 'right';
+[maxOffset, maxOffsetIndex] = max(abs(lateralOffset));
+fprintf('CP27E MIS lap TC simulation (unchanged TC_organized controller)\n');
+fprintf('  Lap time:                   %.2f s (recorded GPS lap %.1f s)\n', ...
+    finishTime, Track_Recorded_Lap_Time);
+fprintf('  Top speed:                  %.1f m/s (%.0f km/h)\n', ...
+    max(out.vehicleSpeed.Data), 3.6*max(out.vehicleSpeed.Data));
+fprintf('  Full throttle:              %.0f%% of the lap; braking %.0f%%\n', ...
+    100*mean(floored), 100*mean(driverLog(:, 2) > 0));
+fprintf('  Peak lateral accel:         %.2f g\n', max(abs(ayActual))/gravity);
+fprintf('  Furthest off the line:      %.2f m at %.0f m\n', maxOffset, ...
+    lateralOffsetS(maxOffsetIndex));
+if any(exitMask)
+    fprintf('  Corner exits (floored, |a_y| >= 0.5 g, %.1f s of the lap):\n', exitTime);
+    fprintf('    Inside  front/rear slip:  peak %.3f / %.3f, mean %.3f / %.3f\n', ...
+        exitInsidePeak, exitInsideMean);
+    fprintf('    Outside front/rear slip:  peak %.3f / %.3f, mean %.3f / %.3f\n', ...
+        exitOutsidePeak, exitOutsideMean);
+    fprintf('    Targets front/rear:       %.3f / %.3f\n', Slip_Target_FL, Slip_Target_RL);
+    fprintf('    Controller - tire slip:   %+.3f on inside wheels (single-speed bias)\n', ...
+        insideBias);
 end
-sideName = Low_Grip_Sides;
-if sideName == "both"
-    sideName = "full width";
-else
-    sideName = sideName + " side only";
+if ~isempty(reapplyPid)
+    fprintf(['  Back on full throttle:      PID at %.1f front / %.1f rear N m ' ...
+        '(mean of %d re-applications)\n'], mean(reapplyPid(:, 1:2), 'all'), ...
+        mean(reapplyPid(:, 3:4), 'all'), numel(reapplyIndex));
 end
-fprintf('CP27E track TC simulation (full throttle, unchanged TC_organized controller)\n');
-fprintf('  Course time (%.0f m):        %.3f s, exit speed %.1f m/s (%.0f km/h)\n', ...
-    Course_Length, finishTime, finishSpeed, 3.6*finishSpeed);
-fprintf('  Launch peak tire slip:      %s (targets %s, v >= 2 m/s)\n', ...
-    sprintf('%.3f ', launchPeakSlip), sprintf('%.3f ', slipTargets));
-if Low_Grip_Fact ~= Grip_Fact
-    fprintf('  %s patch, %s, %.0f-%.0f m (grip %.2f vs %.2f dry):\n', ...
-        Low_Grip_Surface, sideName, Low_Grip_Start, Low_Grip_End, ...
-        Low_Grip_Fact, Grip_Fact);
-    for wheelIndex = find(~isnan(patchPeakSlip))
-        fprintf(['    %s: peak slip %.3f on the patch, PID down to %.1f N m, ' ...
-            'wound back %.3f s after leaving it\n'], wheelLabels{wheelIndex}, ...
-            patchPeakSlip(wheelIndex), patchMinPid(wheelIndex), ...
-            patchRecoveryTime(wheelIndex));
+for section = 1:lowGripCount
+    fprintf('  Low-grip %d: %.0f-%.0f m, grip %.2f, %s, %.0f%% throttle on it\n', ...
+        section, Low_Grip_Start(section), Low_Grip_End(section), ...
+        Low_Grip_Fact(section), Low_Grip_Sections{section, 4}, ...
+        100*sectionThrottle(section));
+    for wheelIndex = find(~isnan(sectionPeakSlip(section, :)))
+        fprintf('    %s: peak slip %.3f (target %.3f), %.2f s above 1.5x target\n', ...
+            wheelLabels{wheelIndex}, sectionPeakSlip(section, wheelIndex), ...
+            slipTargets(wheelIndex), sectionOverTime(section, wheelIndex));
     end
 end
-cornerGrid = linspace(cornerFrom, Corner_End, 2001);
-drivenCornerAngle = rad2deg(abs(trapz(cornerGrid, ...
-    interp1(Track_Breakpoints, Track_Curvature, cornerGrid))));
-fprintf('  Corner: R %.0f m apex, %.0f deg %s driven, %.0f-%.0f m\n', ...
-    Corner_Radius, drivenCornerAngle, turnName, cornerFrom, Corner_End);
-fprintf('    Peak lateral accel:       %.2f g\n', peakLateralG);
-if ranWide
-    fprintf(['    Grip ran out at %.1f m: lateral accel up to %.2f m/s^2 ' ...
-        'short, ran %.2f m wide\n'], firstWideDistance, ...
-        maxLateralShortfall, maxLateralOffset);
-else
-    fprintf('    Held the line (no lateral grip shortfall)\n');
-end
-fprintf('    Peak tire slip:           %s\n', sprintf('%.3f ', cornerPeakSlip));
-fprintf('    Mean tire slip:           %s\n', sprintf('%.3f ', cornerMeanSlip));
-fprintf('    Controller - tire slip:   %s (mean; single-speed slip bias)\n', ...
-    sprintf('%+.3f ', cornerSlipBias));
-fprintf('    Peak friction use:        %s\n', sprintf('%.2f ', cornerPeakGripUse));
-fprintf('    Lowest normal load:       %s N\n', sprintf('%.0f ', cornerMinLoad));
 fprintf(['  Peak commanded power:       %.1f kW (limit %.1f kW, ' ...
     'excess energy %.3f%%)\n'], max(commandedElectricalPower) / 1e3, ...
     maxTractivePower / 1e3, 100 * commandedExcessEnergyFraction);
@@ -539,74 +563,71 @@ fprintf(['  Math checks:                PASS (load %.1e N, tire sum %.1e N, ' ..
     tireForceResidual, vehicleForceResidual, lateralForceResidual);
 
 %% Figure labels shared by every figure
-scenarioLabel = sprintf(['%s patch (grip %.2f, %s) at %.0f-%.0f m, ' ...
-    'R %.0f m %s corner at %.0f-%.0f m, dry grip %.2f'], ...
-    Low_Grip_Surface, Low_Grip_Fact, sideName, Low_Grip_Start, ...
-    Low_Grip_End, Corner_Radius, turnName, cornerFrom, Corner_End, Grip_Fact);
-bandLabel = 'Blue band: low-grip patch under any wheel. Orange band: corner.';
-scenarioName = sprintf(' - %s, grip %.2f', Low_Grip_Surface, Low_Grip_Fact);
-patchBand = [Low_Grip_Start - cg_f, Low_Grip_End + cg_r];  % CG distance [m]
-if Low_Grip_Fact == Grip_Fact
-    patchBand = [];
+sectionNames = strings(lowGripCount, 1);
+for section = 1:lowGripCount
+    sectionNames(section) = sprintf('%.0f-%.0f m grip %.2f %s', ...
+        Low_Grip_Start(section), Low_Grip_End(section), ...
+        Low_Grip_Fact(section), Low_Grip_Sections{section, 4});
 end
-cornerBand = [cornerFrom, Corner_End];
+if lowGripCount == 0
+    scenarioLabel = sprintf('MIS lap, dry (grip %.2f)', Grip_Fact);
+else
+    scenarioLabel = sprintf('MIS lap, dry grip %.2f; low grip: %s', ...
+        Grip_Fact, strjoin(sectionNames, ', '));
+end
+bandLabel = 'Blue bands: low-grip sections under any wheel.';
+scenarioName = sprintf(' - MIS, %d low-grip sections', lowGripCount);
+sectionBands = [Low_Grip_Start - cg_f, Low_Grip_End + cg_r];  % CG distance [m]
 xMax = Course_Length;
 
 %% Track overview
 trackFigure = figure('Name', ['CP27E Track Overview' scenarioName], 'Color', 'w');
 tiledlayout(3, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-% Track map from the curvature profile; the car's path adds the lateral offset.
-sGrid = (0:0.1:Course_Length)';
-heading = cumtrapz(sGrid, interp1(Track_Breakpoints, Track_Curvature, sGrid));
-trackX = cumtrapz(sGrid, cos(heading));
-trackY = cumtrapz(sGrid, sin(heading));
-[offsetDistance, movingIndex] = unique(lateralOffsetS, 'last');  % Skip standstill samples
-offsetGrid = interp1(offsetDistance, lateralOffset(movingIndex), sGrid, ...
-    'linear', 'extrap');
-outwardX = Corner_Direction*sin(heading);   % Outward normal of the turn
-outwardY = -Corner_Direction*cos(heading);
-nexttile;
-plot(trackX, trackY, 'k', 'LineWidth', 1.0);
+% Car path = line + lateral offset along the line's left normal.
+leftNormalX = -sin(Track_Heading);
+leftNormalY = cos(Track_Heading);
+[offsetDistance, movingIndex] = unique(lateralOffsetS, 'last');  % Skip standstill
+offsetOnLine = interp1(offsetDistance, lateralOffset(movingIndex), ...
+    Track_Breakpoints, 'linear', 'extrap');
+nexttile([2, 1]);
+plot(Track_X, Track_Y, 'k', 'LineWidth', 1.0);
 hold on;
-plot(trackX + offsetGrid.*outwardX, trackY + offsetGrid.*outwardY, ...
-    'r--', 'LineWidth', 1.4);
-if ~isempty(patchBand)
-    onPatchGrid = sGrid >= Low_Grip_Start & sGrid <= Low_Grip_End;
-    plot(trackX(onPatchGrid), trackY(onPatchGrid), 'b', 'LineWidth', 6);
+plot(Track_X + offsetOnLine.*leftNormalX, Track_Y + offsetOnLine.*leftNormalY, ...
+    'r--', 'LineWidth', 1.2);
+for section = 1:lowGripCount
+    onSection = Track_Breakpoints >= Low_Grip_Start(section) & ...
+        Track_Breakpoints <= Low_Grip_End(section);
+    plot(Track_X(onSection), Track_Y(onSection), 'b', 'LineWidth', 6, ...
+        'HandleVisibility', 'off');
 end
-onCornerGrid = sGrid >= Corner_Start & sGrid <= Corner_End;
-plot(trackX(onCornerGrid), trackY(onCornerGrid), 'Color', [0.95 0.55 0.1], ...
-    'LineWidth', 2.5);
-plot(trackX(1), trackY(1), 'ko', 'MarkerFaceColor', 'g');
+plot(Track_X(1), Track_Y(1), 'ko', 'MarkerFaceColor', 'g');
 axis equal;
 grid on;
-xlabel('x [m]');
-ylabel('y [m]');
-title('Track (car path dashed red)');
-legendEntries = {'Racing line', 'Car path'};
-if ~isempty(patchBand)
-    legendEntries{end+1} = 'Low-grip patch';
-end
-legend([legendEntries, {'Corner', 'Start'}], 'Location', 'best');
+xlabel('East [m]');
+ylabel('North [m]');
+title('MIS track (blue: low grip)');
+legend({'Racing line', 'Car path', 'Start/finish'}, 'Location', 'best');
 
 nexttile;
-plot(atDistance(out.vehicleSpeed), out.vehicleSpeed.Data, 'k', 'LineWidth', 1.7);
+plot(atDistance(out.vehicleSpeed), out.vehicleSpeed.Data, 'k', 'LineWidth', 1.5);
 hold on;
-plot(atDistance(out.wheelSpeeds), out.wheelSpeeds.Data, 'LineWidth', 1.0);
-shadeEvents(gca, patchBand, cornerBand);
+plot(driverS, driverLog(:, 3), 'Color', [0.95 0.55 0.1], 'LineWidth', 1.1);
+plot(Track_Breakpoints, Track_Recorded_Speed, ':', 'Color', [0.4 0.4 0.4], ...
+    'LineWidth', 1.1);
+shadeSections(gca, sectionBands);
 grid on;
 xlim([0, xMax]);
 xlabel('Distance [m]');
 ylabel('Speed [m/s]');
-title(sprintf('Speeds -- course time %.3f s', finishTime));
-legend([{'Vehicle'}, strcat(wheelLabels, ' wheel surface')], 'Location', 'best');
+title(sprintf('Speed -- lap %.2f s', finishTime));
+legend({'Car', 'Driver target', 'Recorded GPS (real driver)'}, 'Location', 'best');
 
 nexttile;
-plot(lateralS, ayDemand / gravity, 'k--', 'LineWidth', 1.4);
+plot(lateralS, ayDemand / gravity, 'k--', 'LineWidth', 1.1);
 hold on;
-plot(lateralS, ayActual / gravity, 'r', 'LineWidth', 1.4);
-shadeEvents(gca, patchBand, cornerBand);
+plot(lateralS, ayActual / gravity, 'r', 'LineWidth', 1.1);
+shadeSections(gca, sectionBands);
 grid on;
 xlim([0, xMax]);
 xlabel('Distance [m]');
@@ -615,38 +636,29 @@ title('Lateral acceleration: line needs vs tires give');
 legend({'Demanded by the line', 'Achieved'}, 'Location', 'best');
 
 nexttile;
-plot(lateralOffsetS, lateralOffset, 'r', 'LineWidth', 1.4);
-shadeEvents(gca, patchBand, cornerBand);
+yyaxis left;
+plot(driverS, 100 * driverLog(:, 1) / Max_Motor_Torque, 'LineWidth', 1.1);
+ylabel('Throttle [%]');
+ylim([-5, 105]);
+yyaxis right;
+plot(driverS, driverLog(:, 2) / (Mv * gravity), 'LineWidth', 1.1);
+ylabel('Brake [g]');
+shadeSections(gca, sectionBands);
 grid on;
 xlim([0, xMax]);
-ylim([-0.1, max(0.5, 1.1 * max(lateralOffset))]);  % Hide solver-tolerance noise
+xlabel('Distance [m]');
+title('Driver inputs');
+
+nexttile;
+plot(lateralOffsetS, lateralOffset, 'r', 'LineWidth', 1.2);
+shadeSections(gca, sectionBands);
+grid on;
+xlim([0, xMax]);
+ylim([min(-0.5, 1.1 * min(lateralOffset)), max(0.5, 1.1 * max(lateralOffset))]);
 xlabel('Distance [m]');
 ylabel('Offset [m]');
-title('Running wide (outward offset from the line)');
-
-nexttile;
-plot(atDistance(out.acceleration), out.acceleration.Data / gravity, ...
-    'LineWidth', 1.4);
-shadeEvents(gca, patchBand, cornerBand);
-grid on;
-xlim([0, xMax]);
-xlabel('Distance [m]');
-ylabel('Acceleration [g]');
-title('Longitudinal acceleration');
-
-nexttile;
-plot(atDistance(out.torqueCommands), commandedElectricalPower / 1e3, 'LineWidth', 1.4);
-hold on;
-plot(atDistance(out.motorTorques), actualElectricalPower / 1e3, 'LineWidth', 1.2);
-yline(maxTractivePower / 1e3, '--k', '80 kW limit');
-shadeEvents(gca, patchBand, cornerBand);
-grid on;
-xlim([0, xMax]);
-xlabel('Distance [m]');
-ylabel('Electrical power [kW]');
-title('Commanded and delivered power');
-legend({'Commanded', 'Delivered'}, 'Location', 'best');
-trackTitle = sgtitle({'Track overview, full throttle', scenarioLabel, bandLabel});
+title('Car left of the line (running wide when the tires run out)');
+trackTitle = sgtitle({'MIS lap overview', scenarioLabel, bandLabel});
 trackTitle.Color = 'k';
 styleSimulationFigure(trackFigure);
 
@@ -655,22 +667,18 @@ slipFigure = figure('Name', ['CP27E Track Wheel Slip' scenarioName], 'Color', 'w
 tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 for wheelIndex = 1:4
     nexttile;
-    plot(trueSlipS, trueSlip(:, wheelIndex), 'LineWidth', 1.4);
+    plot(trueSlipS, trueSlip(:, wheelIndex), 'LineWidth', 1.1);
     hold on;
-    plot(measuredSlipS, measuredSlip(:, wheelIndex), '--', 'LineWidth', 1.1);
+    plot(measuredSlipS, measuredSlip(:, wheelIndex), '--', 'LineWidth', 0.9);
     yline(slipTargets(wheelIndex), ':k', 'Target', 'LineWidth', 1.2);
     yline(Pacejka_Slip_Peak, ':', 'Peak \mu', 'Color', [0.5 0.5 0.5]);
-    shadeEvents(gca, patchBand, cornerBand);
+    shadeSections(gca, sectionBands);
     grid on;
     xlim([0, xMax]);
     ylim([-0.05, max(0.3, min(1.0, 1.1*max(trueSlip(:, wheelIndex))))]);
     xlabel('Distance [m]');
     ylabel('Slip ratio [-]');
-    position = 'outside';
-    if isInside(wheelIndex)
-        position = 'inside';
-    end
-    title(sprintf('%s (%s wheel in the corner)', wheelLabels{wheelIndex}, position));
+    title(wheelLabels{wheelIndex});
     legend({'Tire slip (own ground speed)', 'Controller slip (CG speed)'}, ...
         'Location', 'best');
 end
@@ -683,8 +691,8 @@ loadsFigure = figure('Name', ['CP27E Track Loads and Grip' scenarioName], 'Color
 tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 nexttile;
-plot(normalLoadS, normalLoad, 'LineWidth', 1.2);
-shadeEvents(gca, patchBand, cornerBand);
+plot(normalLoadS, normalLoad, 'LineWidth', 1.0);
+shadeSections(gca, sectionBands);
 grid on;
 xlim([0, xMax]);
 xlabel('Distance [m]');
@@ -693,8 +701,8 @@ title('Normal loads (longitudinal + lateral transfer)');
 legend(wheelLabels, 'Location', 'best');
 
 nexttile;
-plot(atDistance(out.tireMu), logData(out.tireMu), 'LineWidth', 1.2);
-shadeEvents(gca, patchBand, cornerBand);
+plot(atDistance(out.tireMu), logData(out.tireMu), 'LineWidth', 1.0);
+shadeSections(gca, sectionBands);
 grid on;
 xlim([0, xMax]);
 xlabel('Distance [m]');
@@ -703,9 +711,9 @@ title('Tire friction (surface grip and load sensitivity)');
 legend(wheelLabels, 'Location', 'best');
 
 nexttile;
-plot(gripUseS, gripUse, 'LineWidth', 1.2);
+plot(gripUseS, gripUse, 'LineWidth', 1.0);
 yline(1, '--k', 'Friction limit');
-shadeEvents(gca, patchBand, cornerBand);
+shadeSections(gca, sectionBands);
 grid on;
 xlim([0, xMax]);
 ylim([0, 1.1]);
@@ -715,11 +723,11 @@ title('Friction-ellipse use (1 = at the limit)');
 legend(wheelLabels, 'Location', 'best');
 
 nexttile;
-plot(atDistance(out.tireForces), logData(out.tireForces), 'LineWidth', 1.1);
+plot(atDistance(out.tireForces), logData(out.tireForces), 'LineWidth', 1.0);
 hold on;
 set(gca, 'ColorOrderIndex', 1);
-plot(atDistance(out.lateralForces), lateralForce, '--', 'LineWidth', 1.1);
-shadeEvents(gca, patchBand, cornerBand);
+plot(atDistance(out.lateralForces), lateralForce, '--', 'LineWidth', 1.0);
+shadeSections(gca, sectionBands);
 grid on;
 xlim([0, xMax]);
 xlabel('Distance [m]');
@@ -736,16 +744,16 @@ tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 for wheelIndex = 1:4
     nexttile;
     plot(atDistance(out.feedforwardTorques), ...
-        out.feedforwardTorques.Data(:, wheelIndex), 'LineWidth', 1.4);
+        out.feedforwardTorques.Data(:, wheelIndex), 'LineWidth', 1.2);
     hold on;
     plot(atDistance(out.pidCorrections), ...
-        out.pidCorrections.Data(:, wheelIndex), '--', 'LineWidth', 1.2);
+        out.pidCorrections.Data(:, wheelIndex), '--', 'LineWidth', 1.0);
     plot(atDistance(out.torqueRequests), ...
-        out.torqueRequests.Data(:, wheelIndex), 'k', 'LineWidth', 1.3);
+        out.torqueRequests.Data(:, wheelIndex), 'k', 'LineWidth', 1.1);
     plot(atDistance(out.motorTorques), ...
-        out.motorTorques.Data(:, wheelIndex), ':', 'LineWidth', 1.5);
+        out.motorTorques.Data(:, wheelIndex), ':', 'LineWidth', 1.3);
     yline(Max_Motor_Torque, ':k', 'Stall limit', 'HandleVisibility', 'off');
-    shadeEvents(gca, patchBand, cornerBand);
+    shadeSections(gca, sectionBands);
     grid on;
     xlim([0, xMax]);
     xlabel('Distance [m]');
@@ -753,58 +761,53 @@ for wheelIndex = 1:4
     title([wheelLabels{wheelIndex}, ' controller']);
     legend({'Feedforward', 'PID', 'TC request', 'Delivered'}, 'Location', 'best');
 end
-controllerTitle = sgtitle({'Feedforward plus PID at full throttle', ...
-    scenarioLabel, bandLabel});
+controllerTitle = sgtitle({'Feedforward plus PID', scenarioLabel, bandLabel});
 controllerTitle.Color = 'k';
 styleSimulationFigure(controllerFigure);
 
 %% Car on track: top-down animation
 % Chase view of the car: wheels colored by tire slip relative to target,
 % arrows for each tire's force vector, and faint outlines of where the car
-% has been every 0.25 s. The course map marks every second, and the slip
+% has been every 0.25 s. The course map marks every 10 s, and the slip
 % history has a time cursor. Drag the slider or press Play.
 % The car points along the line (body sideslip is not modeled) and the
 % front wheels show the kinematic steer angle atan(W*kappa).
 roadHalfWidth = 2.5;                        % Road drawn 5 m wide [m]
 frameStep = 0.02;                           % Animation frame spacing [s]
 ghostStep = 0.25;                           % Outline spacing behind the car [s]
-chaseHalfWidth = 8;                         % Chase view half-width [m]
+chaseHalfWidth = 12;                        % Chase view half-width [m]
 forceScale = 1e-3;                          % Force arrows: 1 m per kN
 slipColorMax = 2.5;                         % Top of the slip color scale [x target]
 slipColorMap = interp1([0, 1, 1.5, slipColorMax], ...
     [0.60 0.60 0.60; 0.15 0.70 0.25; 1.00 0.75 0.00; 0.85 0.10 0.10], ...
     linspace(0, slipColorMax, 256));        % Gray (no slip) to green (target) to red
 
-% Road and low-grip patch outlines from the line's left normal.
-leftNormalX = -sin(heading);
-leftNormalY = cos(heading);
-roadX = [trackX + roadHalfWidth*leftNormalX; flipud(trackX - roadHalfWidth*leftNormalX)];
-roadY = [trackY + roadHalfWidth*leftNormalY; flipud(trackY - roadHalfWidth*leftNormalY)];
-patchX = [];
-patchY = [];
-onPatchGrid = sGrid >= Low_Grip_Start & sGrid <= Low_Grip_End;
-if Low_Grip_Fact ~= Grip_Fact && any(onPatchGrid)
-    patchLeft = Low_Grip_Wheels(1)*roadHalfWidth;     % Left half covered
-    patchRight = -Low_Grip_Wheels(2)*roadHalfWidth;   % Right half covered
-    patchX = [trackX(onPatchGrid) + patchLeft*leftNormalX(onPatchGrid); ...
-        flipud(trackX(onPatchGrid) + patchRight*leftNormalX(onPatchGrid))];
-    patchY = [trackY(onPatchGrid) + patchLeft*leftNormalY(onPatchGrid); ...
-        flipud(trackY(onPatchGrid) + patchRight*leftNormalY(onPatchGrid))];
+% Road and low-grip sections as quad strips between two offsets from the line.
+[roadVertices, roadFaces] = roadStrip(Track_X, Track_Y, leftNormalX, leftNormalY, ...
+    true(size(Track_X)), -roadHalfWidth, roadHalfWidth);
+sectionStrips = cell(lowGripCount, 2);
+for section = 1:lowGripCount
+    onSection = Track_Breakpoints >= Low_Grip_Start(section) & ...
+        Track_Breakpoints <= Low_Grip_End(section);
+    [sectionStrips{section, :}] = roadStrip(Track_X, Track_Y, leftNormalX, ...
+        leftNormalY, onSection, -Low_Grip_Wheels(section, 2)*roadHalfWidth, ...
+        Low_Grip_Wheels(section, 1)*roadHalfWidth);
 end
 
 % Car pose and tire states at each animation frame.
 frameTime = (0:frameStep:finishTime)';
 frameS = min(interp1(distanceTime, distanceData, frameTime), Course_Length);
 frameOffset = interp1(out.lateralOffset.Time(:), lateralOffset, frameTime);
-frameX = interp1(sGrid, trackX, frameS) + frameOffset.*interp1(sGrid, outwardX, frameS);
-frameY = interp1(sGrid, trackY, frameS) + frameOffset.*interp1(sGrid, outwardY, frameS);
-frameHeading = interp1(sGrid, heading, frameS);
+frameHeading = interp1(Track_Breakpoints, Track_Heading, frameS);
+frameX = interp1(Track_Breakpoints, Track_X, frameS) - frameOffset.*sin(frameHeading);
+frameY = interp1(Track_Breakpoints, Track_Y, frameS) + frameOffset.*cos(frameHeading);
 frameSteer = atan(W*interp1(Track_Breakpoints, Track_Curvature, frameS));
-frameSlip = interp1(out.trueSlips.Time(:), trueSlip, frameTime);
+frameSlip = interp1(slipTime, trueSlip, frameTime);
 frameFx = interp1(out.tireForces.Time(:), logData(out.tireForces), frameTime);
 frameFy = interp1(out.lateralForces.Time(:), lateralForce, frameTime);
 frameSpeed = interp1(out.vehicleSpeed.Time(:), out.vehicleSpeed.Data(:), frameTime);
 frameAy = interp1(out.lateralAccel.Time(:), ayActual, frameTime);
+frameDriver = interp1(out.driver.Time(:), driverLog(:, 1:2), frameTime, 'previous', 'extrap');
 
 % Car outline in the body frame (x forward, y left), origin at the CG.
 carBody = [-cg_r - 0.35, -0.30; cg_f + 0.70, -0.10; cg_f + 0.70, 0.10; ...
@@ -815,20 +818,22 @@ wheelCenters = [Wheel_Longitudinal_Position, Wheel_Lateral_Position];
 % Outlines of the car every ghostStep. Each frame shows the ones already
 % passed: ghostEnd(g) is the last point of outline g in ghostX/ghostY.
 ghostFrames = 1:round(ghostStep/frameStep):numel(frameTime);
-ghostX = [];
-ghostY = [];
-ghostEnd = zeros(size(ghostFrames));
+ghostX = cell(numel(ghostFrames), 1);
+ghostY = cell(numel(ghostFrames), 1);
 for ghostIndex = 1:numel(ghostFrames)
     frame = ghostFrames(ghostIndex);
     [ghostBody, ghostWheels] = carPolygons([frameX(frame), frameY(frame), ...
         frameHeading(frame)], frameSteer(frame), carBody, wheelBox, wheelCenters);
-    for shape = [{ghostBody}, ghostWheels]
-        ghostX = [ghostX; shape{1}([1:end, 1], 1); NaN]; %#ok<AGROW>
-        ghostY = [ghostY; shape{1}([1:end, 1], 2); NaN]; %#ok<AGROW>
-    end
-    ghostEnd(ghostIndex) = numel(ghostX);
+    shapes = [{ghostBody}, ghostWheels];
+    ghostX{ghostIndex} = cell2mat(cellfun(@(p) [p([1:end, 1], 1); NaN], shapes(:), ...
+        'UniformOutput', false));
+    ghostY{ghostIndex} = cell2mat(cellfun(@(p) [p([1:end, 1], 2); NaN], shapes(:), ...
+        'UniformOutput', false));
 end
-clear frame
+ghostEnd = cumsum(cellfun(@numel, ghostX));
+ghostX = vertcat(ghostX{:});
+ghostY = vertcat(ghostY{:});
+clear frame shapes
 
 animation = struct();
 animation.wheelPatches = gobjects(1, 4);
@@ -842,13 +847,19 @@ animationLayout.OuterPosition = [0, 0.07, 1, 0.93];  % Room for the controls
 
 % Chase view.
 chaseAxes = nexttile(animationLayout, 1, [2, 2]);
-patch(chaseAxes, roadX, roadY, [0.86 0.86 0.86], 'EdgeColor', [0.45 0.45 0.45]);
+patch(chaseAxes, 'Vertices', roadVertices, 'Faces', roadFaces, ...
+    'FaceColor', [0.86 0.86 0.86], 'EdgeColor', 'none');
 hold(chaseAxes, 'on');
-if ~isempty(patchX)
-    patch(chaseAxes, patchX, patchY, [0.35 0.60 1.00], 'FaceAlpha', 0.5, ...
-        'EdgeColor', 'none');
+for section = 1:lowGripCount
+    patch(chaseAxes, 'Vertices', sectionStrips{section, 1}, ...
+        'Faces', sectionStrips{section, 2}, 'FaceColor', [0.35 0.60 1.00], ...
+        'FaceAlpha', 0.5, 'EdgeColor', 'none');
 end
-plot(chaseAxes, trackX, trackY, '--', 'Color', [1 1 1], 'LineWidth', 1.2);
+plot(chaseAxes, Track_X + roadHalfWidth*leftNormalX, Track_Y + roadHalfWidth*leftNormalY, ...
+    'Color', [0.45 0.45 0.45]);
+plot(chaseAxes, Track_X - roadHalfWidth*leftNormalX, Track_Y - roadHalfWidth*leftNormalY, ...
+    'Color', [0.45 0.45 0.45]);
+plot(chaseAxes, Track_X, Track_Y, '--', 'Color', [1 1 1], 'LineWidth', 1.2);
 animation.ghosts = plot(chaseAxes, NaN, NaN, 'Color', [0.45 0.45 0.45 0.5]);
 animation.trail = plot(chaseAxes, NaN, NaN, 'r-', 'LineWidth', 1.2);
 animation.bodyPatch = patch(chaseAxes, NaN, NaN, [0.15 0.25 0.45], 'EdgeColor', 'k');
@@ -869,44 +880,43 @@ slipColorbar.Label.Color = 'k';
 animation.label = text(chaseAxes, 0.02, 0.98, '', 'Units', 'normalized', ...
     'VerticalAlignment', 'top', 'FontName', 'FixedWidth', ...
     'BackgroundColor', 'w', 'Margin', 4);
-xlabel(chaseAxes, 'x [m]');
-ylabel(chaseAxes, 'y [m]');
+xlabel(chaseAxes, 'East [m]');
+ylabel(chaseAxes, 'North [m]');
 title(chaseAxes, 'Chase view (arrows: tire force, 1 m = 1 kN; outlines every 0.25 s)');
 
-% Course map with one-second marks.
+% Whole lap with 10 s marks.
 courseAxes = nexttile(animationLayout, 3, [2, 1]);
-patch(courseAxes, roadX, roadY, [0.90 0.90 0.90], 'EdgeColor', 'none');
+patch(courseAxes, 'Vertices', roadVertices, 'Faces', roadFaces, ...
+    'FaceColor', [0.90 0.90 0.90], 'EdgeColor', 'none');
 hold(courseAxes, 'on');
-if ~isempty(patchX)
-    patch(courseAxes, patchX, patchY, [0.35 0.60 1.00], 'EdgeColor', 'none');
+plot(courseAxes, Track_X, Track_Y, 'k', 'LineWidth', 0.8);
+for section = 1:lowGripCount
+    onSection = Track_Breakpoints >= Low_Grip_Start(section) & ...
+        Track_Breakpoints <= Low_Grip_End(section);
+    plot(courseAxes, Track_X(onSection), Track_Y(onSection), ...
+        'Color', [0.35 0.60 1.00], 'LineWidth', 6);
 end
-plot(courseAxes, trackX, trackY, 'k', 'LineWidth', 0.8);
-plot(courseAxes, frameX, frameY, 'r--', 'LineWidth', 1.0);
-markIndex = round((1:floor(finishTime))/frameStep) + 1;
+markIndex = round((10:10:finishTime)/frameStep) + 1;
 plot(courseAxes, frameX(markIndex), frameY(markIndex), 'k.', 'MarkerSize', 12);
-text(courseAxes, frameX(markIndex) + 2, frameY(markIndex), ...
-    compose('%d s', 1:numel(markIndex)), 'FontSize', 8);
+text(courseAxes, frameX(markIndex) + 6, frameY(markIndex), ...
+    compose('%d s', 10*(1:numel(markIndex))), 'FontSize', 8);
 animation.marker = plot(courseAxes, NaN, NaN, 'o', 'MarkerSize', 8, ...
     'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'k');
 axis(courseAxes, 'equal');
 grid(courseAxes, 'on');
-xlabel(courseAxes, 'x [m]');
-ylabel(courseAxes, 'y [m]');
-title(courseAxes, 'Course (dots every 1 s)');
+xlabel(courseAxes, 'East [m]');
+ylabel(courseAxes, 'North [m]');
+title(courseAxes, 'MIS lap (dots every 10 s, blue: low grip)');
 
 % Slip history with a time cursor.
 slipAxes = nexttile(animationLayout, 7, [1, 3]);
-[uniqueDistance, firstIndex] = unique(distanceData, 'first');
-timeAtDistance = @(d) interp1(uniqueDistance, distanceTime(firstIndex), ...
-    min(max(d, 0), Course_Length));
-if ~isempty(patchBand)
-    xregion(slipAxes, timeAtDistance(patchBand(1)), timeAtDistance(patchBand(2)), ...
-        'FaceColor', [0.2 0.45 0.95], 'FaceAlpha', 0.12, 'HandleVisibility', 'off');
+for section = 1:lowGripCount
+    xregion(slipAxes, timeAtDistance(sectionBands(section, 1)), ...
+        timeAtDistance(sectionBands(section, 2)), 'FaceColor', [0.2 0.45 0.95], ...
+        'FaceAlpha', 0.15, 'HandleVisibility', 'off');
 end
-xregion(slipAxes, timeAtDistance(cornerBand(1)), timeAtDistance(cornerBand(2)), ...
-    'FaceColor', [0.95 0.55 0.1], 'FaceAlpha', 0.10, 'HandleVisibility', 'off');
 hold(slipAxes, 'on');
-plot(slipAxes, out.trueSlips.Time, trueSlip, 'LineWidth', 1.1);
+plot(slipAxes, slipTime, trueSlip, 'LineWidth', 1.0);
 set(slipAxes, 'ColorOrderIndex', 1);
 plot(slipAxes, [0, finishTime], [slipTargets; slipTargets], ':', ...
     'LineWidth', 1.0, 'HandleVisibility', 'off');
@@ -916,7 +926,7 @@ xlim(slipAxes, [0, finishTime]);
 ylim(slipAxes, [-0.05, max(0.3, min(1.0, 1.1*max(trueSlip(:))))]);
 xlabel(slipAxes, 'Time [s]');
 ylabel(slipAxes, 'Tire slip [-]');
-title(slipAxes, 'Tire slip (dotted: targets; blue band: patch, orange band: corner)');
+title(slipAxes, 'Tire slip (dotted: targets; blue bands: low grip)');
 legend(slipAxes, wheelLabels, 'Location', 'eastoutside');
 
 % Frame data and playback controls.
@@ -931,6 +941,8 @@ animation.fx = frameFx;
 animation.fy = frameFy;
 animation.speed = frameSpeed;
 animation.ay = frameAy;
+animation.throttle = frameDriver(:, 1)/Max_Motor_Torque;
+animation.brake = frameDriver(:, 2)/(Mv*gravity);
 animation.gravity = gravity;
 animation.targets = slipTargets;
 animation.carBody = carBody;
@@ -947,26 +959,38 @@ animation.halfWidth = chaseHalfWidth;
 animation.chaseAxes = chaseAxes;
 animation.playing = false;
 animation.frame = 1;
+animation.rates = [2, 1, 0.5, 0.25, 0.1];
 animation.playButton = uicontrol(animationFigure, 'Style', 'pushbutton', ...
     'String', 'Play', 'Units', 'normalized', 'Position', [0.02, 0.015, 0.07, 0.04], ...
     'Callback', @playCarAnimation);
 animation.speedMenu = uicontrol(animationFigure, 'Style', 'popupmenu', ...
-    'String', {'Real time', '1/2 speed', '1/4 speed', '1/10 speed'}, 'Value', 3, ...
+    'String', {'2x', 'Real time', '1/2 speed', '1/4 speed', '1/10 speed'}, 'Value', 2, ...
     'Units', 'normalized', 'Position', [0.10, 0.015, 0.08, 0.04]);
 animation.slider = uicontrol(animationFigure, 'Style', 'slider', ...
     'Units', 'normalized', 'Position', [0.20, 0.02, 0.77, 0.03], ...
     'Min', 0, 'Max', frameTime(end), 'Value', 0, ...
-    'SliderStep', [min(1, frameStep/frameTime(end)), min(1, 0.25/frameTime(end))]);
+    'SliderStep', [min(1, frameStep/frameTime(end)), min(1, 1/frameTime(end))]);
 animationFigure.UserData = animation;
 animation.slider.Callback = @(source, ~) drawCarFrame(ancestor(source, 'figure'), ...
     round(source.Value/frameStep) + 1);
 addlistener(animation.slider, 'ContinuousValueChange', ...
     @(source, ~) drawCarFrame(ancestor(source, 'figure'), round(source.Value/frameStep) + 1));
-animationTitle = title(animationLayout, {'Car on track', scenarioLabel});
+animationTitle = title(animationLayout, {'Car on the MIS lap', scenarioLabel});
 animationTitle.Color = 'k';
 styleSimulationFigure(animationFigure);
 drawCarFrame(animationFigure, 1);
 clear animation
+
+function [vertices, faces] = roadStrip(x, y, normalX, normalY, keep, rightOffset, leftOffset)
+% Quad strip between two offsets from the line (left positive) over the
+% points in keep, for a patch with 'Vertices' and 'Faces'.
+x = x(keep); y = y(keep); normalX = normalX(keep); normalY = normalY(keep);
+n = numel(x);
+vertices = [x + leftOffset*normalX, y + leftOffset*normalY; ...
+    x + rightOffset*normalX, y + rightOffset*normalY];
+quad = (1:n - 1)';
+faces = [quad, quad + 1, n + quad + 1, n + quad];
+end
 
 function [body, wheels] = carPolygons(pose, steer, carBody, wheelBox, wheelCenters)
 % Car body and wheel outlines in track coordinates for pose [x, y, heading].
@@ -1013,16 +1037,18 @@ set(a.marker, 'XData', a.x(frame), 'YData', a.y(frame));
 a.cursor.Value = a.time(frame);
 xlim(a.chaseAxes, a.x(frame) + a.halfWidth*[-1, 1]);
 ylim(a.chaseAxes, a.y(frame) + a.halfWidth*[-1, 1]);
-a.label.String = sprintf(['t = %.2f s   s = %.1f m   v = %.1f m/s   ' ...
-    'a_y = %.2f g\nslip  FL %.3f  FR %.3f  RL %.3f  RR %.3f'], a.time(frame), ...
-    a.s(frame), a.speed(frame), a.ay(frame)/a.gravity, a.slip(frame, :));
+a.label.String = sprintf(['t = %.2f s   s = %.0f m   v = %.1f m/s\n' ...
+    'a_y = %.2f g   throttle %3.0f%%   brake %.2f g\n' ...
+    'slip  FL %.3f  FR %.3f  RL %.3f  RR %.3f'], a.time(frame), a.s(frame), ...
+    a.speed(frame), a.ay(frame)/a.gravity, 100*a.throttle(frame), ...
+    a.brake(frame), a.slip(frame, :));
 a.slider.Value = a.time(frame);
 a.frame = frame;
 figureHandle.UserData = a;
 end
 
 function playCarAnimation(button, ~)
-% Play or pause the car animation at the selected fraction of real time.
+% Play or pause the car animation at the selected playback speed.
 % Moving the slider while playing continues from the new position.
 figureHandle = ancestor(button, 'figure');
 a = figureHandle.UserData;
@@ -1034,19 +1060,18 @@ end
 a.playing = true;
 figureHandle.UserData = a;
 button.String = 'Pause';
-rates = [1, 0.5, 0.25, 0.1];
 frame = a.frame;
 if frame >= numel(a.time)
     frame = 1;
 end
-rate = rates(a.speedMenu.Value);
+rate = a.rates(a.speedMenu.Value);
 clockStart = tic;
 timeStart = a.time(frame);
 lastDrawn = frame;
 while isvalid(figureHandle) && figureHandle.UserData.playing && frame < numel(a.time)
-    if figureHandle.UserData.frame ~= lastDrawn || rates(a.speedMenu.Value) ~= rate
+    if figureHandle.UserData.frame ~= lastDrawn || a.rates(a.speedMenu.Value) ~= rate
         frame = figureHandle.UserData.frame;   % Slider moved or speed changed
-        rate = rates(a.speedMenu.Value);
+        rate = a.rates(a.speedMenu.Value);
         clockStart = tic;
         timeStart = a.time(frame);
     end
@@ -1072,14 +1097,12 @@ if size(data, 1) ~= numel(ts.Time)
 end
 end
 
-function shadeEvents(ax, patchBand, cornerBand)
-% Shade the low-grip patch (blue) and the corner (orange) on a distance axis.
-if ~isempty(patchBand)
-    xregion(ax, patchBand(1), patchBand(2), 'FaceColor', [0.2 0.45 0.95], ...
-        'FaceAlpha', 0.12, 'HandleVisibility', 'off');
+function shadeSections(ax, bands)
+% Shade each low-grip section (rows of [start, end]) on a distance axis.
+for band = 1:size(bands, 1)
+    xregion(ax, bands(band, 1), bands(band, 2), 'FaceColor', [0.2 0.45 0.95], ...
+        'FaceAlpha', 0.15, 'HandleVisibility', 'off');
 end
-xregion(ax, cornerBand(1), cornerBand(2), 'FaceColor', [0.95 0.55 0.1], ...
-    'FaceAlpha', 0.10, 'HandleVisibility', 'off');
 end
 
 function styleSimulationFigure(figureHandle)

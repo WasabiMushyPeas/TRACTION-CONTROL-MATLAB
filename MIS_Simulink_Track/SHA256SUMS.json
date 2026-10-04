@@ -1,0 +1,14 @@
+{
+  "CLAUDE_HANDOFF.md": "0b814f4eee18c527f3ccd5483b324749a551cd148b43028612274ebf2291b6e5",
+  "README.md": "14c8acaa1f83eaf2fc57ab74278b9f22024b31e867fc06ead4fe5420040a8d7e",
+  "build_track.py": "17e5a7e5eb1af2d41d3e11965acb9a15c39e9031c4e73b40bb87c2edec07057d",
+  "load_mis_track.m": "289301a4ba3b4b9de096c35d18e755ead76231b325c8837083a3ffdf4e4d1dc0",
+  "mis_track.csv": "bbec35580dbe0b134a27498f5891931e69d7eae86543720638a991f522f4c5d9",
+  "mis_track.json": "38d7b7c11eeacb1f3974e5c0f1a9df9bb80598bf393cc900e3911d577ebf37dc",
+  "mis_track.mat": "e33a1f81364edb75dafb1e6d007e9d2b4e35eae0bc69da5d9e82a6716ac6cd71",
+  "sample_mis_track.m": "6ab4ed8197c2c03ae34686f2604c91ab0c8484d34b3a4d08c076ae7b8bf27d39",
+  "source_gps.csv": "aa692f63a7094cdbf7f88fb0ed2826b860cf61f6d41a88066992c32e906fa81f",
+  "test_mis_track.m": "23b15a48f7a8726cc6f12416bf564227dc4455f2d8a5a5e68f6829d6e90415d2",
+  "track_preview.png": "cb5ccc4e93f675355e9a55d74e0b406ae57660ab4531ec033911b3d6c4279901",
+  "validation.json": "f6df7ee5b2d419058889d2f07abbabd501141a46d93d93d5f305de8df757ccf6"
+}

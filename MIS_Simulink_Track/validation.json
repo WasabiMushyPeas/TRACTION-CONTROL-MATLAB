@@ -1,0 +1,17 @@
+{
+  "source_rows": 35736,
+  "output_rows": 1990,
+  "raw_path_length_m": 1010.5177551247216,
+  "length_m": 994.4163402822934,
+  "spacing_m": 0.49995793880457184,
+  "raw_endpoint_gap_m": 1.6831053829470066,
+  "gate_closure_gap_m": 0.9683841365572309,
+  "lap_cut_time_s": 71.31294380727489,
+  "trimmed_time_s": 0.15705619272510773,
+  "rms_fit_displacement_m": 0.1019610905157916,
+  "max_fit_displacement_m": 0.7191339401028662,
+  "max_abs_curvature_1pm": 0.19353182941505226,
+  "net_heading_turns": 1.0,
+  "integrated_curvature_rad": 6.283548698041173,
+  "matlab_execution": "Not executed: MATLAB/Simulink unavailable in build environment."
+}
